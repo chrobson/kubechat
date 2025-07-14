@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package chat;
+
+option go_package = "./proto/chat";
+
+import "google/protobuf/timestamp.proto";
+
+service ChatService {
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  rpc GetMessageHistory(GetMessageHistoryRequest) returns (GetMessageHistoryResponse);
+}
+
+message SendMessageRequest {
+  string sender_id = 1;
+  string recipient_id = 2;
+  string message = 3;
+}
+
+message SendMessageResponse {
+  string message_id = 1;
+  bool success = 2;
+  string error = 3;
+}
+
+message GetMessageHistoryRequest {
+  string user_id1 = 1;
+  string user_id2 = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+message GetMessageHistoryResponse {
+  repeated Message messages = 1;
+}
+
+message Message {
+  string message_id = 1;
+  string sender_id = 2;
+  string recipient_id = 3;
+  string content = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}

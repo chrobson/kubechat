@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  nats:
+    image: nats:latest
+    ports:
+      - "4222:4222"
+      - "6222:6222" 
+      - "8222:8222"
+
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: kubechat
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  users-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.users
+    ports:
+      - "50051:50051"
+    depends_on:
+      - nats
+
+  presence-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.presence
+    ports:
+      - "50052:50052"
+    depends_on:
+      - nats
+
+  chat-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.chat
+    ports:
+      - "50053:50053"
+    depends_on:
+      - nats
+      - message-store-service
+
+  message-store-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.messagestore
+    ports:
+      - "50054:50054"
+    depends_on:
+      - nats
+      - postgres
+    environment:
+      - DATABASE_URL=postgres://user:password@postgres:5432/kubechat?sslmode=disable
+
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      - users-service
+      - chat-service
+      - presence-service
+      - nats
+
+volumes:
+  postgres_data:

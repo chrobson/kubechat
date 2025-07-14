@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package presence;
+
+option go_package = "./proto/presence";
+
+import "google/protobuf/timestamp.proto";
+
+service PresenceService {
+  rpc SetUserOnline(SetUserOnlineRequest) returns (SetUserOnlineResponse);
+  rpc SetUserOffline(SetUserOfflineRequest) returns (SetUserOfflineResponse);
+  rpc GetUserStatus(GetUserStatusRequest) returns (GetUserStatusResponse);
+  rpc GetOnlineUsers(GetOnlineUsersRequest) returns (GetOnlineUsersResponse);
+}
+
+message SetUserOnlineRequest {
+  string user_id = 1;
+}
+
+message SetUserOnlineResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message SetUserOfflineRequest {
+  string user_id = 1;
+}
+
+message SetUserOfflineResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetUserStatusRequest {
+  string user_id = 1;
+}
+
+message GetUserStatusResponse {
+  string user_id = 1;
+  bool online = 2;
+  google.protobuf.Timestamp last_seen = 3;
+}
+
+message GetOnlineUsersRequest {}
+
+message GetOnlineUsersResponse {
+  repeated string user_ids = 1;
+}
+
+message UserStatusEvent {
+  string user_id = 1;
+  bool online = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}

@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: message-store-service
+  namespace: kubechat
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: message-store-service
+  template:
+    metadata:
+      labels:
+        app: message-store-service
+    spec:
+      containers:
+      - name: message-store-service
+        image: kubechat/message-store-service:latest
+        ports:
+        - containerPort: 50054
+        env:
+        - name: PORT
+          value: "50054"
+        - name: NATS_URL
+          value: "nats://nats:4222"
+        - name: DATABASE_URL
+          value: "postgres://user:password@postgres:5432/kubechat?sslmode=disable"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: message-store-service
+  namespace: kubechat
+spec:
+  selector:
+    app: message-store-service
+  ports:
+  - port: 50054
+    targetPort: 50054
+  type: ClusterIP

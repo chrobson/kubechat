@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package messagestore;
+
+option go_package = "./proto/messagestore";
+
+import "google/protobuf/timestamp.proto";
+
+service MessageStoreService {
+  rpc StoreMessage(StoreMessageRequest) returns (StoreMessageResponse);
+  rpc GetMessageHistory(GetMessageHistoryRequest) returns (GetMessageHistoryResponse);
+  rpc DeleteMessage(DeleteMessageRequest) returns (DeleteMessageResponse);
+}
+
+message StoreMessageRequest {
+  string message_id = 1;
+  string sender_id = 2;
+  string recipient_id = 3;
+  string content = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+message StoreMessageResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message GetMessageHistoryRequest {
+  string user_id1 = 1;
+  string user_id2 = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+message GetMessageHistoryResponse {
+  repeated StoredMessage messages = 1;
+}
+
+message DeleteMessageRequest {
+  string message_id = 1;
+  string user_id = 2;
+}
+
+message DeleteMessageResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message StoredMessage {
+  string message_id = 1;
+  string sender_id = 2;
+  string recipient_id = 3;
+  string content = 4;
+  google.protobuf.Timestamp timestamp = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
