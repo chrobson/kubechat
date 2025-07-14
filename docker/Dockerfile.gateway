@@ -9,9 +9,10 @@ RUN go build -o bin/api-gateway ./services/api-gateway
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
-WORKDIR /root/
+WORKDIR /app
 
 COPY --from=builder /app/bin/api-gateway .
+COPY --from=builder /app/demo ./demo
 
 EXPOSE 8080
 CMD ["./api-gateway"]

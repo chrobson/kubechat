@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  nats:
+    image: nats:latest
+    ports:
+      - "4222:4222"
+      - "6222:6222" 
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/varz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: kubechat
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d kubechat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  users-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.users
+    ports:
+      - "50051:50051"
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  presence-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.presence
+    ports:
+      - "50052:50052"
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  message-store-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.messagestore
+    ports:
+      - "50054:50054"
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgres://user:password@postgres:5432/kubechat?sslmode=disable
+      - NATS_URL=nats://nats:4222
+    restart: unless-stopped
+
+  chat-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.chat
+    ports:
+      - "50053:50053"
+    depends_on:
+      nats:
+        condition: service_healthy
+      message-store-service:
+        condition: service_started
+    environment:
+      - NATS_URL=nats://nats:4222
+      - MESSAGE_STORE_URL=message-store-service:50054
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      users-service:
+        condition: service_started
+      chat-service:
+        condition: service_started
+      presence-service:
+        condition: service_started
+      nats:
+        condition: service_healthy
+    environment:
+      - NATS_URL=nats://nats:4222
+      - USERS_SERVICE_URL=users-service:50051
+      - CHAT_SERVICE_URL=chat-service:50053
+      - PRESENCE_SERVICE_URL=presence-service:50052
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

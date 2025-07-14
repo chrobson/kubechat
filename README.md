@@ -61,10 +61,16 @@ A real-time chat application built with Go microservices, Kubernetes, gRPC, and 
 
 ## Quick Start
 
-### Using Docker Compose (Recommended)
+### 🎯 Try the Demo (Recommended)
+```bash
+./demo/start-demo.sh
+```
+Then open http://localhost:8080 in your browser!
+
+### Using Docker Compose
 ```bash
 cd docker
-docker-compose up --build
+docker-compose -f docker-compose.demo.yml up --build
 ```
 
 ### Using Kubernetes
@@ -108,6 +114,7 @@ make run-gateway  # Start API gateway
 
 ## Documentation
 
+- 🎯 [Demo Guide](DEMO.md) - Quick demo setup with web interface
 - 📖 [Deployment Guide](DEPLOYMENT.md) - How to deploy locally and on Kubernetes
 - 🧪 [Testing Guide](TESTING.md) - API testing, WebSocket testing, and integration tests
 - 🔧 [Makefile](Makefile) - Build and development commands
@@ -125,6 +132,10 @@ kubechat/
 ├── proto/             # Protocol buffer definitions
 ├── k8s/               # Kubernetes manifests
 ├── docker/            # Docker files and compose
+├── demo/              # Demo setup and web interface
+│   ├── index.html     # Web-based chat interface
+│   └── start-demo.sh  # Quick demo startup script
+├── DEMO.md            # Demo guide
 ├── DEPLOYMENT.md      # Deployment instructions
 └── TESTING.md         # Testing guide
 ```

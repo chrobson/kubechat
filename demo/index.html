@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KubeChat Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 300px 1fr 250px;
+            gap: 20px;
+            height: 80vh;
+        }
+        .panel {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .auth-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .auth-panel input, .auth-panel button {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .auth-panel button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        .auth-panel button:hover {
+            background: #0056b3;
+        }
+        .chat-panel {
+            display: flex;
+            flex-direction: column;
+        }
+        .messages {
+            flex: 1;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            overflow-y: auto;
+            margin-bottom: 10px;
+            background: #fafafa;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .message.sent {
+            background: #007bff;
+            color: white;
+            margin-left: 20%;
+        }
+        .message.received {
+            background: #e9ecef;
+            margin-right: 20%;
+        }
+        .message-input {
+            display: flex;
+            gap: 10px;
+        }
+        .message-input input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .message-input button {
+            padding: 10px 20px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .users-panel h3 {
+            margin-top: 0;
+        }
+        .user-list {
+            list-style: none;
+            padding: 0;
+        }
+        .user-list li {
+            padding: 8px;
+            margin-bottom: 5px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .user-list li:hover {
+            background: #e9ecef;
+        }
+        .user-list li.active {
+            background: #007bff;
+            color: white;
+        }
+        .status {
+            margin-bottom: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .online-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #28a745;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>KubeChat Demo</h1>
+    
+    <div id="status" class="status disconnected">
+        Disconnected - Please login first
+    </div>
+
+    <div class="container">
+        <!-- Authentication Panel -->
+        <div class="panel auth-panel">
+            <h3>Authentication</h3>
+            <div id="loginForm">
+                <input type="text" id="username" placeholder="Username" value="alice">
+                <input type="password" id="password" placeholder="Password" value="password123">
+                <button onclick="login()">Login</button>
+                <button onclick="register()">Register</button>
+            </div>
+            <div id="userInfo" style="display: none;">
+                <p>Logged in as: <span id="currentUser"></span></p>
+                <button onclick="logout()">Logout</button>
+            </div>
+        </div>
+
+        <!-- Chat Panel -->
+        <div class="panel chat-panel">
+            <h3>Chat with: <span id="chatWith">Select a user</span></h3>
+            <div id="messages" class="messages"></div>
+            <div class="message-input">
+                <input type="text" id="messageInput" placeholder="Type a message..." onkeypress="handleKeyPress(event)">
+                <button onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+
+        <!-- Users Panel -->
+        <div class="panel users-panel">
+            <h3>Online Users</h3>
+            <ul id="userList" class="user-list"></ul>
+            <button onclick="getOnlineUsers()" style="margin-top: 10px; width: 100%;">Refresh Users</button>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let currentUser = null;
+        let currentRecipient = null;
+        let userToken = null;
+
+        async function register() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            if (!username || !password) {
+                alert('Please enter username and password');
+                return;
+            }
+
+            try {
+                const response = await fetch('/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        password: password,
+                        email: username + '@example.com'
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    alert('Registration successful! You can now login.');
+                } else {
+                    alert('Registration failed: ' + result.message);
+                }
+            } catch (error) {
+                alert('Registration error: ' + error.message);
+            }
+        }
+
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            if (!username || !password) {
+                alert('Please enter username and password');
+                return;
+            }
+
+            try {
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        password: password
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    currentUser = result.user_id;
+                    userToken = result.token;
+                    
+                    document.getElementById('currentUser').textContent = username;
+                    document.getElementById('loginForm').style.display = 'none';
+                    document.getElementById('userInfo').style.display = 'block';
+                    
+                    connectWebSocket();
+                } else {
+                    alert('Login failed: ' + result.message);
+                }
+            } catch (error) {
+                alert('Login error: ' + error.message);
+            }
+        }
+
+        function logout() {
+            if (ws) {
+                ws.close();
+            }
+            currentUser = null;
+            userToken = null;
+            currentRecipient = null;
+            
+            document.getElementById('loginForm').style.display = 'block';
+            document.getElementById('userInfo').style.display = 'none';
+            document.getElementById('status').className = 'status disconnected';
+            document.getElementById('status').textContent = 'Disconnected - Please login first';
+            document.getElementById('messages').innerHTML = '';
+            document.getElementById('userList').innerHTML = '';
+            document.getElementById('chatWith').textContent = 'Select a user';
+        }
+
+        function connectWebSocket() {
+            const wsUrl = `ws://localhost:8080/ws?user_id=${currentUser}`;
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function(event) {
+                document.getElementById('status').className = 'status connected';
+                document.getElementById('status').textContent = 'Connected to KubeChat';
+                getOnlineUsers();
+            };
+
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                
+                switch (data.type) {
+                    case 'new_message':
+                        displayMessage(data.content, false);
+                        break;
+                    case 'online_users':
+                        updateUserList(data.content);
+                        break;
+                    case 'user_status':
+                        handleUserStatus(data.content);
+                        break;
+                }
+            };
+
+            ws.onclose = function(event) {
+                document.getElementById('status').className = 'status disconnected';
+                document.getElementById('status').textContent = 'Disconnected from server';
+            };
+
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                document.getElementById('status').className = 'status disconnected';
+                document.getElementById('status').textContent = 'Connection error';
+            };
+        }
+
+        function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const message = messageInput.value.trim();
+            
+            if (!message || !currentRecipient) {
+                if (!currentRecipient) {
+                    alert('Please select a user to chat with');
+                }
+                return;
+            }
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'send_message',
+                    content: {
+                        recipient_id: currentRecipient,
+                        message: message
+                    }
+                }));
+
+                displayMessage({
+                    sender_id: currentUser,
+                    recipient_id: currentRecipient,
+                    content: message
+                }, true);
+
+                messageInput.value = '';
+            }
+        }
+
+        function displayMessage(message, isSent) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message ' + (isSent ? 'sent' : 'received');
+            
+            const time = new Date().toLocaleTimeString();
+            messageDiv.innerHTML = `
+                <div>${message.content}</div>
+                <small>${time}</small>
+            `;
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function getOnlineUsers() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'get_online_users'
+                }));
+            }
+        }
+
+        function updateUserList(users) {
+            const userList = document.getElementById('userList');
+            userList.innerHTML = '';
+            
+            users.forEach(userId => {
+                if (userId !== currentUser) {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<span class="online-indicator"></span>User ${userId.substring(0, 8)}...`;
+                    li.onclick = () => selectUser(userId, li);
+                    li.dataset.userId = userId;
+                    userList.appendChild(li);
+                }
+            });
+        }
+
+        function selectUser(userId, element) {
+            // Remove active class from all users
+            document.querySelectorAll('.user-list li').forEach(li => {
+                li.classList.remove('active');
+            });
+            
+            // Add active class to selected user
+            element.classList.add('active');
+            
+            currentRecipient = userId;
+            document.getElementById('chatWith').textContent = `User ${userId.substring(0, 8)}...`;
+            document.getElementById('messages').innerHTML = '';
+        }
+
+        function handleUserStatus(status) {
+            console.log('User status update:', status);
+            // Refresh user list when someone comes online/offline
+            setTimeout(getOnlineUsers, 1000);
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        // Auto-create demo users on page load
+        window.onload = function() {
+            // Create demo users
+            createDemoUsers();
+        };
+
+        async function createDemoUsers() {
+            const demoUsers = [
+                { username: 'alice', password: 'password123' },
+                { username: 'bob', password: 'password123' },
+                { username: 'charlie', password: 'password123' }
+            ];
+
+            for (const user of demoUsers) {
+                try {
+                    await fetch('/register', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            username: user.username,
+                            password: user.password,
+                            email: user.username + '@example.com'
+                        })
+                    });
+                } catch (error) {
+                    // Ignore errors - users might already exist
+                }
+            }
+        }
+    </script>
+</body>
+</html>

@@ -311,7 +311,7 @@ func main() {
 	http.HandleFunc("/login", gateway.handleLogin)
 	http.HandleFunc("/register", gateway.handleRegister)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "static/index.html")
+		http.ServeFile(w, r, "/app/demo/index.html")
 	})
 
 	log.Println("API Gateway listening on :8080")
