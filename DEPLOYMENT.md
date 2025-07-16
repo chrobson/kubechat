@@ -80,21 +80,39 @@ kubectl wait --for=condition=ready pod -l app=nats -n kubechat --timeout=60s
 kubectl wait --for=condition=ready pod -l app=postgres -n kubechat --timeout=60s
 ```
 
-4. Build and push Docker images:
+4. Build Docker images:
+
+### Option A: Local Development (Recommended)
+For local development without external registry:
 ```bash
 docker build -f docker/Dockerfile.users -t kubechat/users-service:latest .
 docker build -f docker/Dockerfile.presence -t kubechat/presence-service:latest .
 docker build -f docker/Dockerfile.chat -t kubechat/chat-service:latest .
 docker build -f docker/Dockerfile.messagestore -t kubechat/message-store-service:latest .
 docker build -f docker/Dockerfile.gateway -t kubechat/api-gateway:latest .
+```
+
+**Note:** All deployment files use `imagePullPolicy: IfNotPresent` by default, so locally built images will be used without requiring an external registry.
+
+### Option B: External Registry (Production)
+For production deployment with external registry:
+```bash
+# Build and tag with your registry
+docker build -f docker/Dockerfile.users -t your-registry/kubechat/users-service:latest .
+docker build -f docker/Dockerfile.presence -t your-registry/kubechat/presence-service:latest .
+docker build -f docker/Dockerfile.chat -t your-registry/kubechat/chat-service:latest .
+docker build -f docker/Dockerfile.messagestore -t your-registry/kubechat/message-store-service:latest .
+docker build -f docker/Dockerfile.gateway -t your-registry/kubechat/api-gateway:latest .
 
 # Push to your registry
-docker push kubechat/users-service:latest
-docker push kubechat/presence-service:latest
-docker push kubechat/chat-service:latest
-docker push kubechat/message-store-service:latest
-docker push kubechat/api-gateway:latest
+docker push your-registry/kubechat/users-service:latest
+docker push your-registry/kubechat/presence-service:latest
+docker push your-registry/kubechat/chat-service:latest
+docker push your-registry/kubechat/message-store-service:latest
+docker push your-registry/kubechat/api-gateway:latest
 ```
+
+Then update the image names in the deployment files and change `imagePullPolicy: IfNotPresent` to `imagePullPolicy: Always` if needed.
 
 5. Deploy services:
 ```bash

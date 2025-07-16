@@ -16,6 +16,7 @@ spec:
       containers:
       - name: api-gateway
         image: kubechat/api-gateway:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
         env:

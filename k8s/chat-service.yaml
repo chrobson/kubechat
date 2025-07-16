@@ -16,6 +16,7 @@ spec:
       containers:
       - name: chat-service
         image: kubechat/chat-service:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 50053
         env:

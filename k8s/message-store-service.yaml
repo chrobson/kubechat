@@ -16,6 +16,7 @@ spec:
       containers:
       - name: message-store-service
         image: kubechat/message-store-service:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 50054
         env:

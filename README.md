@@ -78,6 +78,8 @@ docker-compose -f docker-compose.demo.yml up --build
 kubectl apply -f k8s/
 ```
 
+**Note:** All deployment files use `imagePullPolicy: IfNotPresent` to use locally built images without requiring an external image registry. See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions including Docker image building.
+
 ### Manual Development
 ```bash
 make proto    # Generate protobuf files
