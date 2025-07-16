@@ -463,16 +463,19 @@
             const messagesDiv = document.getElementById('messages');
             messagesDiv.innerHTML = '';
             
+            // Save local messages before clearing
+            const localMessages = chatHistory[userId] ? [...chatHistory[userId]] : [];
+            
             try {
                 // First try to load from server
                 const response = await fetch(`/chat/history?user1=${currentUser}&user2=${userId}`);
                 if (response.ok) {
                     const data = await response.json();
                     
-                    // Clear local cache for this user
-                    chatHistory[userId] = [];
+                    // Start with empty array for merging
+                    const mergedMessages = [];
                     
-                    // Process server messages and add to local cache
+                    // Process server messages
                     if (data.messages && data.messages.length > 0) {
                         // Sort messages by timestamp (oldest first)
                         const sortedMessages = data.messages.sort((a, b) => {
@@ -487,30 +490,56 @@
                                 isSent: serverMessage.sender_id === currentUser,
                                 timestamp: new Date(serverMessage.timestamp.seconds * 1000).toLocaleTimeString(),
                                 senderId: serverMessage.sender_id,
-                                recipientId: serverMessage.recipient_id
+                                recipientId: serverMessage.recipient_id,
+                                messageId: serverMessage.message_id
                             };
                             
-                            chatHistory[userId].push(messageObj);
-                            addMessageToUI(messageObj);
+                            mergedMessages.push(messageObj);
                         });
                     }
+                    
+                    // Merge with local messages that might not be on server yet
+                    localMessages.forEach(localMessage => {
+                        // Check if this message is already in server messages
+                        const isDuplicate = mergedMessages.some(serverMessage => 
+                            serverMessage.messageId === localMessage.messageId ||
+                            (serverMessage.content === localMessage.content && 
+                             serverMessage.senderId === localMessage.senderId &&
+                             Math.abs(new Date('1970-01-01T' + serverMessage.timestamp) - new Date('1970-01-01T' + localMessage.timestamp)) < 2000)
+                        );
+                        
+                        if (!isDuplicate) {
+                            mergedMessages.push(localMessage);
+                        }
+                    });
+                    
+                    // Sort all messages by timestamp
+                    mergedMessages.sort((a, b) => {
+                        const timeA = new Date('1970-01-01T' + a.timestamp);
+                        const timeB = new Date('1970-01-01T' + b.timestamp);
+                        return timeA - timeB;
+                    });
+                    
+                    // Update cache and display
+                    chatHistory[userId] = mergedMessages;
+                    mergedMessages.forEach(messageObj => {
+                        addMessageToUI(messageObj);
+                    });
                 } else {
                     console.log('Failed to load chat history from server, using local cache');
                     // Fallback to local cache
-                    if (chatHistory[userId]) {
-                        chatHistory[userId].forEach(messageObj => {
-                            addMessageToUI(messageObj);
-                        });
-                    }
+                    chatHistory[userId] = localMessages;
+                    localMessages.forEach(messageObj => {
+                        addMessageToUI(messageObj);
+                    });
                 }
             } catch (error) {
                 console.log('Error loading chat history:', error);
                 // Fallback to local cache
-                if (chatHistory[userId]) {
-                    chatHistory[userId].forEach(messageObj => {
-                        addMessageToUI(messageObj);
-                    });
-                }
+                chatHistory[userId] = localMessages;
+                localMessages.forEach(messageObj => {
+                    addMessageToUI(messageObj);
+                });
             }
         }
 
