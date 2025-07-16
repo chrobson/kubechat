@@ -45,14 +45,22 @@ func (s *server) SendMessage(ctx context.Context, req *chat.SendMessageRequest) 
 		}, err
 	}
 
-	// Publish to recipient's channel only
-	subject := "chat.messages." + req.RecipientId
-	err = s.natsConn.Publish(subject, messageData)
+	// Publish to recipient's channel
+	recipientSubject := "chat.messages." + req.RecipientId
+	err = s.natsConn.Publish(recipientSubject, messageData)
 	if err != nil {
 		return &chat.SendMessageResponse{
 			Success: false,
-			Error:   "Failed to publish message",
+			Error:   "Failed to publish message to recipient",
 		}, err
+	}
+
+	// Also publish to sender's channel so they can see their own message
+	senderSubject := "chat.messages." + req.SenderId
+	err = s.natsConn.Publish(senderSubject, messageData)
+	if err != nil {
+		log.Printf("Failed to publish message to sender: %v", err)
+		// Don't return error for sender notification failure, message was delivered to recipient
 	}
 
 	// Store message in message store service

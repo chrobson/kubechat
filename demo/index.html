@@ -405,12 +405,6 @@
                     }
                 }));
 
-                displayMessage({
-                    sender_id: currentUser,
-                    recipient_id: currentRecipient,
-                    content: message
-                }, true);
-
                 messageInput.value = '';
             }
         }
@@ -663,33 +657,40 @@
         }
         
         function handleIncomingMessage(message) {
+            const isFromCurrentUser = message.sender_id === currentUser;
             const isFromCurrentChat = currentRecipient === message.sender_id;
             
-            // Display message in chat if it's from current conversation
-            displayMessage(message, false);
-            
-            // If message is not from current chat, show notification
-            if (!isFromCurrentChat) {
-                const senderUsername = userNames[message.sender_id] || `User ${message.sender_id.substring(0, 8)}...`;
+            // Display message in chat
+            if (isFromCurrentUser) {
+                // Message sent by current user - show as sent message
+                displayMessage(message, true);
+            } else {
+                // Message received from another user - show as received message
+                displayMessage(message, false);
                 
-                // Increment unread count
-                if (!unreadCounts[message.sender_id]) {
-                    unreadCounts[message.sender_id] = 0;
+                // If message is not from current chat, show notification
+                if (!isFromCurrentChat) {
+                    const senderUsername = userNames[message.sender_id] || `User ${message.sender_id.substring(0, 8)}...`;
+                    
+                    // Increment unread count
+                    if (!unreadCounts[message.sender_id]) {
+                        unreadCounts[message.sender_id] = 0;
+                    }
+                    unreadCounts[message.sender_id]++;
+                    
+                    // Update user list to show notification badge
+                    updateUserListUnreadCounts();
+                    
+                    // Show notification
+                    showNotification(
+                        `New message from ${senderUsername}`,
+                        message.content,
+                        null
+                    );
+                    
+                    // Play notification sound
+                    playNotificationSound();
                 }
-                unreadCounts[message.sender_id]++;
-                
-                // Update user list to show notification badge
-                updateUserListUnreadCounts();
-                
-                // Show notification
-                showNotification(
-                    `New message from ${senderUsername}`,
-                    message.content,
-                    null
-                );
-                
-                // Play notification sound
-                playNotificationSound();
             }
         }
         
