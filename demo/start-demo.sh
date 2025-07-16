@@ -15,11 +15,11 @@ if ! command -v docker-compose >/dev/null 2>&1; then
     exit 1
 fi
 
-# Navigate to docker directory
-cd "$(dirname "$0")/../docker" || exit 1
+# Navigate to project directory
+cd "$(dirname "$0")/.." || exit 1
 
 echo "📦 Building and starting all services..."
-docker-compose -f docker-compose.demo.yml up --build -d
+docker-compose -f docker/docker-compose.simple.yml up --build -d
 
 echo ""
 echo "⏳ Waiting for services to start..."

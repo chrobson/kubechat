@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	pb "kubechat/proto"
+	presence "kubechat/proto/presence"
 )
 
 type UserStatus struct {
@@ -21,13 +22,13 @@ type UserStatus struct {
 }
 
 type server struct {
-	pb.UnimplementedPresenceServiceServer
+	presence.UnimplementedPresenceServiceServer
 	userStatuses map[string]*UserStatus
 	mutex        sync.RWMutex
 	natsConn     *nats.Conn
 }
 
-func (s *server) SetUserOnline(ctx context.Context, req *pb.SetUserOnlineRequest) (*pb.SetUserOnlineResponse, error) {
+func (s *server) SetUserOnline(ctx context.Context, req *presence.SetUserOnlineRequest) (*presence.SetUserOnlineResponse, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -39,7 +40,7 @@ func (s *server) SetUserOnline(ctx context.Context, req *pb.SetUserOnlineRequest
 	}
 
 	// Publish status update to NATS
-	event := &pb.UserStatusEvent{
+	event := &presence.UserStatusEvent{
 		UserId:    req.UserId,
 		Online:    true,
 		Timestamp: timestamppb.New(now),
@@ -52,13 +53,13 @@ func (s *server) SetUserOnline(ctx context.Context, req *pb.SetUserOnlineRequest
 		s.natsConn.Publish("users.status", eventData)
 	}
 
-	return &pb.SetUserOnlineResponse{
+	return &presence.SetUserOnlineResponse{
 		Success: true,
 		Message: "User set to online",
 	}, nil
 }
 
-func (s *server) SetUserOffline(ctx context.Context, req *pb.SetUserOfflineRequest) (*pb.SetUserOfflineResponse, error) {
+func (s *server) SetUserOffline(ctx context.Context, req *presence.SetUserOfflineRequest) (*presence.SetUserOfflineResponse, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -75,7 +76,7 @@ func (s *server) SetUserOffline(ctx context.Context, req *pb.SetUserOfflineReque
 	}
 
 	// Publish status update to NATS
-	event := &pb.UserStatusEvent{
+	event := &presence.UserStatusEvent{
 		UserId:    req.UserId,
 		Online:    false,
 		Timestamp: timestamppb.New(now),
@@ -88,33 +89,33 @@ func (s *server) SetUserOffline(ctx context.Context, req *pb.SetUserOfflineReque
 		s.natsConn.Publish("users.status", eventData)
 	}
 
-	return &pb.SetUserOfflineResponse{
+	return &presence.SetUserOfflineResponse{
 		Success: true,
 		Message: "User set to offline",
 	}, nil
 }
 
-func (s *server) GetUserStatus(ctx context.Context, req *pb.GetUserStatusRequest) (*pb.GetUserStatusResponse, error) {
+func (s *server) GetUserStatus(ctx context.Context, req *presence.GetUserStatusRequest) (*presence.GetUserStatusResponse, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
 	status, exists := s.userStatuses[req.UserId]
 	if !exists {
-		return &pb.GetUserStatusResponse{
+		return &presence.GetUserStatusResponse{
 			UserId:   req.UserId,
 			Online:   false,
 			LastSeen: timestamppb.New(time.Now()),
 		}, nil
 	}
 
-	return &pb.GetUserStatusResponse{
+	return &presence.GetUserStatusResponse{
 		UserId:   status.UserID,
 		Online:   status.Online,
 		LastSeen: timestamppb.New(status.LastSeen),
 	}, nil
 }
 
-func (s *server) GetOnlineUsers(ctx context.Context, req *pb.GetOnlineUsersRequest) (*pb.GetOnlineUsersResponse, error) {
+func (s *server) GetOnlineUsers(ctx context.Context, req *presence.GetOnlineUsersRequest) (*presence.GetOnlineUsersResponse, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -125,14 +126,45 @@ func (s *server) GetOnlineUsers(ctx context.Context, req *pb.GetOnlineUsersReque
 		}
 	}
 
-	return &pb.GetOnlineUsersResponse{
+	return &presence.GetOnlineUsersResponse{
 		UserIds: onlineUsers,
 	}, nil
 }
 
+func (s *server) clearAllUserStatuses() {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	
+	log.Println("Clearing all user statuses on service start")
+	// Mark all existing users as offline
+	for userID, status := range s.userStatuses {
+		status.Online = false
+		status.LastSeen = time.Now()
+		
+		// Publish offline status for each user
+		event := &presence.UserStatusEvent{
+			UserId:    userID,
+			Online:    false,
+			Timestamp: timestamppb.New(time.Now()),
+		}
+		
+		eventData, err := json.Marshal(event)
+		if err == nil {
+			s.natsConn.Publish("users.status", eventData)
+		}
+	}
+	
+	// Clear the map entirely to start fresh
+	s.userStatuses = make(map[string]*UserStatus)
+}
+
 func main() {
 	// Connect to NATS
-	nc, err := nats.Connect(nats.DefaultURL)
+	natsURL := os.Getenv("NATS_URL")
+	if natsURL == "" {
+		natsURL = nats.DefaultURL
+	}
+	nc, err := nats.Connect(natsURL)
 	if err != nil {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
@@ -149,7 +181,10 @@ func main() {
 		natsConn:     nc,
 	}
 
-	pb.RegisterPresenceServiceServer(s, presenceServer)
+	// Clear any stale user statuses from previous runs
+	presenceServer.clearAllUserStatuses()
+
+	presence.RegisterPresenceServiceServer(s, presenceServer)
 
 	log.Println("Presence service listening on :50052")
 	if err := s.Serve(lis); err != nil {

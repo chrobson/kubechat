@@ -7,25 +7,28 @@ import (
 	"encoding/json"
 	"log"
 	"net"
+	"os"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	pb "kubechat/proto"
+	
+	chat "kubechat/proto/chat"
+	messagestore "kubechat/proto/messagestore"
 )
 
 type server struct {
-	pb.UnimplementedChatServiceServer
+	chat.UnimplementedChatServiceServer
 	natsConn         *nats.Conn
-	messageStoreConn pb.MessageStoreServiceClient
+	messageStoreConn messagestore.MessageStoreServiceClient
 }
 
-func (s *server) SendMessage(ctx context.Context, req *pb.SendMessageRequest) (*pb.SendMessageResponse, error) {
+func (s *server) SendMessage(ctx context.Context, req *chat.SendMessageRequest) (*chat.SendMessageResponse, error) {
 	messageID := generateMessageID()
 	now := time.Now()
 
-	message := &pb.Message{
+	message := &chat.Message{
 		MessageId:   messageID,
 		SenderId:    req.SenderId,
 		RecipientId: req.RecipientId,
@@ -36,29 +39,25 @@ func (s *server) SendMessage(ctx context.Context, req *pb.SendMessageRequest) (*
 	// Publish message to NATS for real-time delivery
 	messageData, err := json.Marshal(message)
 	if err != nil {
-		return &pb.SendMessageResponse{
+		return &chat.SendMessageResponse{
 			Success: false,
 			Error:   "Failed to marshal message",
 		}, err
 	}
 
-	// Publish to recipient's channel
+	// Publish to recipient's channel only
 	subject := "chat.messages." + req.RecipientId
 	err = s.natsConn.Publish(subject, messageData)
 	if err != nil {
-		return &pb.SendMessageResponse{
+		return &chat.SendMessageResponse{
 			Success: false,
 			Error:   "Failed to publish message",
 		}, err
 	}
 
-	// Also publish to sender's channel for confirmation
-	senderSubject := "chat.messages." + req.SenderId
-	s.natsConn.Publish(senderSubject, messageData)
-
 	// Store message in message store service
 	if s.messageStoreConn != nil {
-		storeReq := &pb.StoreMessageRequest{
+		storeReq := &messagestore.StoreMessageRequest{
 			MessageId:   messageID,
 			SenderId:    req.SenderId,
 			RecipientId: req.RecipientId,
@@ -71,20 +70,20 @@ func (s *server) SendMessage(ctx context.Context, req *pb.SendMessageRequest) (*
 		}
 	}
 
-	return &pb.SendMessageResponse{
+	return &chat.SendMessageResponse{
 		MessageId: messageID,
 		Success:   true,
 	}, nil
 }
 
-func (s *server) GetMessageHistory(ctx context.Context, req *pb.GetMessageHistoryRequest) (*pb.GetMessageHistoryResponse, error) {
+func (s *server) GetMessageHistory(ctx context.Context, req *chat.GetMessageHistoryRequest) (*chat.GetMessageHistoryResponse, error) {
 	if s.messageStoreConn == nil {
-		return &pb.GetMessageHistoryResponse{
-			Messages: []*pb.Message{},
+		return &chat.GetMessageHistoryResponse{
+			Messages: []*chat.Message{},
 		}, nil
 	}
 
-	storeReq := &pb.GetMessageHistoryRequest{
+	storeReq := &messagestore.GetMessageHistoryRequest{
 		UserId1: req.UserId1,
 		UserId2: req.UserId2,
 		Limit:   req.Limit,
@@ -96,9 +95,9 @@ func (s *server) GetMessageHistory(ctx context.Context, req *pb.GetMessageHistor
 		return nil, err
 	}
 
-	var messages []*pb.Message
+	var messages []*chat.Message
 	for _, stored := range resp.Messages {
-		messages = append(messages, &pb.Message{
+		messages = append(messages, &chat.Message{
 			MessageId:   stored.MessageId,
 			SenderId:    stored.SenderId,
 			RecipientId: stored.RecipientId,
@@ -107,7 +106,7 @@ func (s *server) GetMessageHistory(ctx context.Context, req *pb.GetMessageHistor
 		})
 	}
 
-	return &pb.GetMessageHistoryResponse{
+	return &chat.GetMessageHistoryResponse{
 		Messages: messages,
 	}, nil
 }
@@ -120,19 +119,27 @@ func generateMessageID() string {
 
 func main() {
 	// Connect to NATS
-	nc, err := nats.Connect(nats.DefaultURL)
+	natsURL := os.Getenv("NATS_URL")
+	if natsURL == "" {
+		natsURL = nats.DefaultURL
+	}
+	nc, err := nats.Connect(natsURL)
 	if err != nil {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
 	defer nc.Close()
 
 	// Connect to message store service (optional)
-	var messageStoreConn pb.MessageStoreServiceClient
-	conn, err := grpc.Dial("localhost:50054", grpc.WithInsecure())
+	var messageStoreConn messagestore.MessageStoreServiceClient
+	messageStoreURL := os.Getenv("MESSAGE_STORE_URL")
+	if messageStoreURL == "" {
+		messageStoreURL = "localhost:50054"
+	}
+	conn, err := grpc.Dial(messageStoreURL, grpc.WithInsecure())
 	if err != nil {
 		log.Printf("Failed to connect to message store service: %v", err)
 	} else {
-		messageStoreConn = pb.NewMessageStoreServiceClient(conn)
+		messageStoreConn = messagestore.NewMessageStoreServiceClient(conn)
 		defer conn.Close()
 	}
 
@@ -147,7 +154,7 @@ func main() {
 		messageStoreConn: messageStoreConn,
 	}
 
-	pb.RegisterChatServiceServer(s, chatServer)
+	chat.RegisterChatServiceServer(s, chatServer)
 
 	log.Println("Chat service listening on :50053")
 	if err := s.Serve(lis); err != nil {

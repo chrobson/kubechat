@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -13,7 +14,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
-	pb "kubechat/proto"
+	
+	users "kubechat/proto/users"
 )
 
 type User struct {
@@ -25,32 +27,32 @@ type User struct {
 }
 
 type server struct {
-	pb.UnimplementedUsersServiceServer
+	users.UnimplementedUsersServiceServer
 	users map[string]*User
 	mutex sync.RWMutex
 }
 
-func (s *server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.CreateUserResponse, error) {
+func (s *server) CreateUser(ctx context.Context, req *users.CreateUserRequest) (*users.CreateUserResponse, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	// Check if username already exists
 	for _, user := range s.users {
 		if user.Username == req.Username {
-			return &pb.CreateUserResponse{
+			return &users.CreateUserResponse{
 				Success: false,
 				Message: "Username already exists",
 			}, nil
 		}
 	}
 
-	// Generate user ID
-	userID := generateID()
+	// Generate deterministic user ID from username
+	userID := generateUserID(req.Username)
 
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		return &pb.CreateUserResponse{
+		return &users.CreateUserResponse{
 			Success: false,
 			Message: "Failed to hash password",
 		}, err
@@ -66,14 +68,14 @@ func (s *server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb
 
 	s.users[userID] = user
 
-	return &pb.CreateUserResponse{
+	return &users.CreateUserResponse{
 		UserId:  userID,
 		Success: true,
 		Message: "User created successfully",
 	}, nil
 }
 
-func (s *server) LoginUser(ctx context.Context, req *pb.LoginUserRequest) (*pb.LoginUserResponse, error) {
+func (s *server) LoginUser(ctx context.Context, req *users.LoginUserRequest) (*users.LoginUserResponse, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -86,7 +88,7 @@ func (s *server) LoginUser(ctx context.Context, req *pb.LoginUserRequest) (*pb.L
 	}
 
 	if user == nil {
-		return &pb.LoginUserResponse{
+		return &users.LoginUserResponse{
 			Success: false,
 			Message: "User not found",
 		}, nil
@@ -95,7 +97,7 @@ func (s *server) LoginUser(ctx context.Context, req *pb.LoginUserRequest) (*pb.L
 	// Check password
 	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password))
 	if err != nil {
-		return &pb.LoginUserResponse{
+		return &users.LoginUserResponse{
 			Success: false,
 			Message: "Invalid password",
 		}, nil
@@ -104,7 +106,7 @@ func (s *server) LoginUser(ctx context.Context, req *pb.LoginUserRequest) (*pb.L
 	// Generate JWT token
 	token, err := generateJWT(user.ID)
 	if err != nil {
-		return &pb.LoginUserResponse{
+		return &users.LoginUserResponse{
 			Success: false,
 			Message: "Failed to generate token",
 		}, err
@@ -112,7 +114,7 @@ func (s *server) LoginUser(ctx context.Context, req *pb.LoginUserRequest) (*pb.L
 
 	user.Online = true
 
-	return &pb.LoginUserResponse{
+	return &users.LoginUserResponse{
 		UserId:  user.ID,
 		Token:   token,
 		Success: true,
@@ -120,7 +122,7 @@ func (s *server) LoginUser(ctx context.Context, req *pb.LoginUserRequest) (*pb.L
 	}, nil
 }
 
-func (s *server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.GetUserResponse, error) {
+func (s *server) GetUser(ctx context.Context, req *users.GetUserRequest) (*users.GetUserResponse, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -129,7 +131,7 @@ func (s *server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.GetUs
 		return nil, fmt.Errorf("user not found")
 	}
 
-	return &pb.GetUserResponse{
+	return &users.GetUserResponse{
 		UserId:   user.ID,
 		Username: user.Username,
 		Email:    user.Email,
@@ -141,6 +143,11 @@ func generateID() string {
 	bytes := make([]byte, 16)
 	rand.Read(bytes)
 	return hex.EncodeToString(bytes)
+}
+
+func generateUserID(username string) string {
+	hash := sha256.Sum256([]byte(username))
+	return hex.EncodeToString(hash[:16]) // Use first 16 bytes
 }
 
 func generateJWT(userID string) (string, error) {
@@ -164,7 +171,7 @@ func main() {
 		users: make(map[string]*User),
 	}
 
-	pb.RegisterUsersServiceServer(s, userServer)
+	users.RegisterUsersServiceServer(s, userServer)
 
 	log.Println("Users service listening on :50051")
 	if err := s.Serve(lis); err != nil {

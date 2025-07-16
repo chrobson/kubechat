@@ -4,24 +4,37 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
+	"os"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	_ "github.com/lib/pq"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	pb "kubechat/proto"
+	
+	chat "kubechat/proto/chat"
+	messagestore "kubechat/proto/messagestore"
 )
 
 type server struct {
-	pb.UnimplementedMessageStoreServiceServer
+	messagestore.UnimplementedMessageStoreServiceServer
 	db       *sql.DB
 	natsConn *nats.Conn
 }
 
-func (s *server) StoreMessage(ctx context.Context, req *pb.StoreMessageRequest) (*pb.StoreMessageResponse, error) {
+func (s *server) StoreMessage(ctx context.Context, req *messagestore.StoreMessageRequest) (*messagestore.StoreMessageResponse, error) {
+	// If database is not available, just log and return success
+	if s.db == nil {
+		log.Printf("Database not available, message not persisted: %s from %s to %s", 
+			req.Content, req.SenderId, req.RecipientId)
+		return &messagestore.StoreMessageResponse{
+			Success: true,
+		}, nil
+	}
+
 	query := `
 		INSERT INTO messages (message_id, sender_id, recipient_id, content, timestamp, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)`
@@ -36,18 +49,27 @@ func (s *server) StoreMessage(ctx context.Context, req *pb.StoreMessageRequest) 
 	)
 
 	if err != nil {
-		return &pb.StoreMessageResponse{
+		log.Printf("Failed to store message in database: %v", err)
+		return &messagestore.StoreMessageResponse{
 			Success: false,
 			Error:   err.Error(),
 		}, err
 	}
 
-	return &pb.StoreMessageResponse{
+	return &messagestore.StoreMessageResponse{
 		Success: true,
 	}, nil
 }
 
-func (s *server) GetMessageHistory(ctx context.Context, req *pb.GetMessageHistoryRequest) (*pb.GetMessageHistoryResponse, error) {
+func (s *server) GetMessageHistory(ctx context.Context, req *messagestore.GetMessageHistoryRequest) (*messagestore.GetMessageHistoryResponse, error) {
+	// If database is not available, return empty history
+	if s.db == nil {
+		log.Printf("Database not available, returning empty message history")
+		return &messagestore.GetMessageHistoryResponse{
+			Messages: []*messagestore.StoredMessage{},
+		}, nil
+	}
+
 	query := `
 		SELECT message_id, sender_id, recipient_id, content, timestamp, created_at
 		FROM messages
@@ -62,13 +84,16 @@ func (s *server) GetMessageHistory(ctx context.Context, req *pb.GetMessageHistor
 
 	rows, err := s.db.QueryContext(ctx, query, req.UserId1, req.UserId2, limit, req.Offset)
 	if err != nil {
-		return nil, err
+		log.Printf("Failed to query message history: %v", err)
+		return &messagestore.GetMessageHistoryResponse{
+			Messages: []*messagestore.StoredMessage{},
+		}, nil
 	}
 	defer rows.Close()
 
-	var messages []*pb.StoredMessage
+	var messages []*messagestore.StoredMessage
 	for rows.Next() {
-		var msg pb.StoredMessage
+		var msg messagestore.StoredMessage
 		var timestamp, createdAt time.Time
 
 		err := rows.Scan(
@@ -89,17 +114,17 @@ func (s *server) GetMessageHistory(ctx context.Context, req *pb.GetMessageHistor
 		messages = append(messages, &msg)
 	}
 
-	return &pb.GetMessageHistoryResponse{
+	return &messagestore.GetMessageHistoryResponse{
 		Messages: messages,
 	}, nil
 }
 
-func (s *server) DeleteMessage(ctx context.Context, req *pb.DeleteMessageRequest) (*pb.DeleteMessageResponse, error) {
+func (s *server) DeleteMessage(ctx context.Context, req *messagestore.DeleteMessageRequest) (*messagestore.DeleteMessageResponse, error) {
 	query := `DELETE FROM messages WHERE message_id = $1 AND sender_id = $2`
 
 	result, err := s.db.ExecContext(ctx, query, req.MessageId, req.UserId)
 	if err != nil {
-		return &pb.DeleteMessageResponse{
+		return &messagestore.DeleteMessageResponse{
 			Success: false,
 			Error:   err.Error(),
 		}, err
@@ -107,27 +132,27 @@ func (s *server) DeleteMessage(ctx context.Context, req *pb.DeleteMessageRequest
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return &pb.DeleteMessageResponse{
+		return &messagestore.DeleteMessageResponse{
 			Success: false,
 			Error:   err.Error(),
 		}, err
 	}
 
 	if rowsAffected == 0 {
-		return &pb.DeleteMessageResponse{
+		return &messagestore.DeleteMessageResponse{
 			Success: false,
 			Error:   "Message not found or not authorized to delete",
 		}, nil
 	}
 
-	return &pb.DeleteMessageResponse{
+	return &messagestore.DeleteMessageResponse{
 		Success: true,
 	}, nil
 }
 
 func (s *server) subscribeToMessages() {
 	sub, err := s.natsConn.Subscribe("chat.messages.*", func(msg *nats.Msg) {
-		var message pb.Message
+		var message chat.Message
 		err := json.Unmarshal(msg.Data, &message)
 		if err != nil {
 			log.Printf("Failed to unmarshal message: %v", err)
@@ -135,7 +160,7 @@ func (s *server) subscribeToMessages() {
 		}
 
 		// Store the message
-		storeReq := &pb.StoreMessageRequest{
+		storeReq := &messagestore.StoreMessageRequest{
 			MessageId:   message.MessageId,
 			SenderId:    message.SenderId,
 			RecipientId: message.RecipientId,
@@ -158,11 +183,48 @@ func (s *server) subscribeToMessages() {
 }
 
 func initDB() (*sql.DB, error) {
-	// For demo purposes, using SQLite. In production, use PostgreSQL
-	db, err := sql.Open("postgres", "postgres://user:password@localhost/kubechat?sslmode=disable")
+	// Get database connection string from environment
+	dbHost := os.Getenv("DB_HOST")
+	if dbHost == "" {
+		dbHost = "postgres" // Docker service name
+	}
+	
+	dbPort := os.Getenv("DB_PORT")
+	if dbPort == "" {
+		dbPort = "5432"
+	}
+	
+	dbUser := os.Getenv("DB_USER")
+	if dbUser == "" {
+		dbUser = "user"
+	}
+	
+	dbPassword := os.Getenv("DB_PASSWORD")
+	if dbPassword == "" {
+		dbPassword = "password"
+	}
+	
+	dbName := os.Getenv("DB_NAME")
+	if dbName == "" {
+		dbName = "kubechat"
+	}
+	
+	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", 
+		dbUser, dbPassword, dbHost, dbPort, dbName)
+	
+	log.Printf("Attempting to connect to database: %s", connStr)
+	
+	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		// Fallback to in-memory SQLite for demo
-		log.Println("PostgreSQL not available, this would normally connect to a real database")
+		log.Printf("Failed to open database connection: %v", err)
+		return nil, err
+	}
+
+	// Test the connection
+	err = db.Ping()
+	if err != nil {
+		log.Printf("Failed to ping database: %v", err)
+		db.Close()
 		return nil, err
 	}
 
@@ -181,9 +243,11 @@ func initDB() (*sql.DB, error) {
 	_, err = db.Exec(createTableQuery)
 	if err != nil {
 		log.Printf("Failed to create table: %v", err)
+		db.Close()
 		return nil, err
 	}
 
+	log.Println("Successfully connected to database and created tables")
 	return db, nil
 }
 
@@ -195,7 +259,11 @@ func main() {
 	}
 
 	// Connect to NATS
-	nc, err := nats.Connect(nats.DefaultURL)
+	natsURL := os.Getenv("NATS_URL")
+	if natsURL == "" {
+		natsURL = nats.DefaultURL
+	}
+	nc, err := nats.Connect(natsURL)
 	if err != nil {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
@@ -217,7 +285,7 @@ func main() {
 		go messageStoreServer.subscribeToMessages()
 	}
 
-	pb.RegisterMessageStoreServiceServer(s, messageStoreServer)
+	messagestore.RegisterMessageStoreServiceServer(s, messageStoreServer)
 
 	log.Println("Message store service listening on :50054")
 	if err := s.Serve(lis); err != nil {

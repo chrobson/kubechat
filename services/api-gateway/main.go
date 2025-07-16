@@ -5,27 +5,32 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
-	pb "kubechat/proto"
+	
+	chat "kubechat/proto/chat"
+	presence "kubechat/proto/presence"
+	users "kubechat/proto/users"
 )
 
 type Gateway struct {
-	usersClient    pb.UsersServiceClient
-	chatClient     pb.ChatServiceClient
-	presenceClient pb.PresenceServiceClient
+	usersClient    users.UsersServiceClient
+	chatClient     chat.ChatServiceClient
+	presenceClient presence.PresenceServiceClient
 	natsConn       *nats.Conn
 	clients        map[string]*Client
 	clientsMutex   sync.RWMutex
 }
 
 type Client struct {
-	UserID string
-	Conn   *websocket.Conn
-	Send   chan []byte
+	UserID       string
+	Conn         *websocket.Conn
+	Send         chan []byte
+	Subscription *nats.Subscription
 }
 
 type Message struct {
@@ -60,17 +65,25 @@ func (g *Gateway) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Send:   make(chan []byte, 256),
 	}
 
+	// Subscribe to user's messages before adding to clients map
+	subscription := g.subscribeToUserMessages(userID, client)
+	client.Subscription = subscription
+
 	g.clientsMutex.Lock()
+	// Check if user already has a connection and clean it up
+	if existingClient, exists := g.clients[userID]; exists {
+		existingClient.Conn.Close()
+		if existingClient.Subscription != nil {
+			existingClient.Subscription.Unsubscribe()
+		}
+	}
 	g.clients[userID] = client
 	g.clientsMutex.Unlock()
 
 	// Set user online
-	g.presenceClient.SetUserOnline(context.Background(), &pb.SetUserOnlineRequest{
+	g.presenceClient.SetUserOnline(context.Background(), &presence.SetUserOnlineRequest{
 		UserId: userID,
 	})
-
-	// Subscribe to user's messages
-	g.subscribeToUserMessages(userID)
 
 	go g.writePump(client)
 	go g.readPump(client)
@@ -82,8 +95,13 @@ func (g *Gateway) readPump(client *Client) {
 		delete(g.clients, client.UserID)
 		g.clientsMutex.Unlock()
 
+		// Unsubscribe from NATS messages
+		if client.Subscription != nil {
+			client.Subscription.Unsubscribe()
+		}
+
 		// Set user offline
-		g.presenceClient.SetUserOffline(context.Background(), &pb.SetUserOfflineRequest{
+		g.presenceClient.SetUserOffline(context.Background(), &presence.SetUserOfflineRequest{
 			UserId: client.UserID,
 		})
 
@@ -128,7 +146,7 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 			if recipientID, ok := content["recipient_id"].(string); ok {
 				if messageText, ok := content["message"].(string); ok {
 					// Send message via chat service
-					resp, err := g.chatClient.SendMessage(context.Background(), &pb.SendMessageRequest{
+					resp, err := g.chatClient.SendMessage(context.Background(), &chat.SendMessageRequest{
 						SenderId:    client.UserID,
 						RecipientId: recipientID,
 						Message:     messageText,
@@ -143,7 +161,7 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 		}
 
 	case "get_online_users":
-		resp, err := g.presenceClient.GetOnlineUsers(context.Background(), &pb.GetOnlineUsersRequest{})
+		resp, err := g.presenceClient.GetOnlineUsers(context.Background(), &presence.GetOnlineUsersRequest{})
 		if err != nil {
 			log.Printf("Failed to get online users: %v", err)
 			return
@@ -159,15 +177,16 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 	}
 }
 
-func (g *Gateway) subscribeToUserMessages(userID string) {
+func (g *Gateway) subscribeToUserMessages(userID string, client *Client) *nats.Subscription {
 	subject := "chat.messages." + userID
-	g.natsConn.Subscribe(subject, func(msg *nats.Msg) {
+	sub, err := g.natsConn.Subscribe(subject, func(msg *nats.Msg) {
 		g.clientsMutex.RLock()
-		client, exists := g.clients[userID]
+		currentClient, exists := g.clients[userID]
 		g.clientsMutex.RUnlock()
 
-		if exists {
-			var chatMessage pb.Message
+		// Only process if this is still the current client for this user
+		if exists && currentClient == client {
+			var chatMessage chat.Message
 			err := json.Unmarshal(msg.Data, &chatMessage)
 			if err != nil {
 				log.Printf("Failed to unmarshal chat message: %v", err)
@@ -190,11 +209,18 @@ func (g *Gateway) subscribeToUserMessages(userID string) {
 			}
 		}
 	})
+	
+	if err != nil {
+		log.Printf("Failed to subscribe to user messages: %v", err)
+		return nil
+	}
+	
+	return sub
 }
 
 func (g *Gateway) subscribeToUserStatus() {
 	g.natsConn.Subscribe("users.status", func(msg *nats.Msg) {
-		var statusEvent pb.UserStatusEvent
+		var statusEvent presence.UserStatusEvent
 		err := json.Unmarshal(msg.Data, &statusEvent)
 		if err != nil {
 			log.Printf("Failed to unmarshal status event: %v", err)
@@ -228,7 +254,7 @@ func (g *Gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var loginReq pb.LoginUserRequest
+	var loginReq users.LoginUserRequest
 	err := json.NewDecoder(r.Body).Decode(&loginReq)
 	if err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -251,7 +277,7 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var createReq pb.CreateUserRequest
+	var createReq users.CreateUserRequest
 	err := json.NewDecoder(r.Body).Decode(&createReq)
 	if err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -268,37 +294,111 @@ func (g *Gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (g *Gateway) handleGetUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract user ID from URL path
+	path := r.URL.Path
+	if len(path) <= 6 { // "/user/" is 6 characters
+		http.Error(w, "User ID required", http.StatusBadRequest)
+		return
+	}
+	userID := path[6:] // Remove "/user/" prefix
+
+	resp, err := g.usersClient.GetUser(context.Background(), &users.GetUserRequest{
+		UserId: userID,
+	})
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (g *Gateway) handleGetChatHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract parameters from query string
+	userID1 := r.URL.Query().Get("user1")
+	userID2 := r.URL.Query().Get("user2")
+	
+	if userID1 == "" || userID2 == "" {
+		http.Error(w, "Both user1 and user2 parameters required", http.StatusBadRequest)
+		return
+	}
+
+	// Get chat history from chat service
+	resp, err := g.chatClient.GetMessageHistory(context.Background(), &chat.GetMessageHistoryRequest{
+		UserId1: userID1,
+		UserId2: userID2,
+		Limit:   50, // Default limit
+		Offset:  0,
+	})
+	if err != nil {
+		log.Printf("Failed to get chat history: %v", err)
+		http.Error(w, "Failed to get chat history", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func main() {
 	// Connect to gRPC services
-	usersConn, err := grpc.Dial("localhost:50051", grpc.WithInsecure())
+	usersURL := os.Getenv("USERS_SERVICE_URL")
+	if usersURL == "" {
+		usersURL = "localhost:50051"
+	}
+	usersConn, err := grpc.Dial(usersURL, grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("Failed to connect to users service: %v", err)
 	}
 	defer usersConn.Close()
 
-	chatConn, err := grpc.Dial("localhost:50053", grpc.WithInsecure())
+	chatURL := os.Getenv("CHAT_SERVICE_URL")
+	if chatURL == "" {
+		chatURL = "localhost:50053"
+	}
+	chatConn, err := grpc.Dial(chatURL, grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("Failed to connect to chat service: %v", err)
 	}
 	defer chatConn.Close()
 
-	presenceConn, err := grpc.Dial("localhost:50052", grpc.WithInsecure())
+	presenceURL := os.Getenv("PRESENCE_SERVICE_URL")
+	if presenceURL == "" {
+		presenceURL = "localhost:50052"
+	}
+	presenceConn, err := grpc.Dial(presenceURL, grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("Failed to connect to presence service: %v", err)
 	}
 	defer presenceConn.Close()
 
 	// Connect to NATS
-	nc, err := nats.Connect(nats.DefaultURL)
+	natsURL := os.Getenv("NATS_URL")
+	if natsURL == "" {
+		natsURL = nats.DefaultURL
+	}
+	nc, err := nats.Connect(natsURL)
 	if err != nil {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
 	defer nc.Close()
 
 	gateway := &Gateway{
-		usersClient:    pb.NewUsersServiceClient(usersConn),
-		chatClient:     pb.NewChatServiceClient(chatConn),
-		presenceClient: pb.NewPresenceServiceClient(presenceConn),
+		usersClient:    users.NewUsersServiceClient(usersConn),
+		chatClient:     chat.NewChatServiceClient(chatConn),
+		presenceClient: presence.NewPresenceServiceClient(presenceConn),
 		natsConn:       nc,
 		clients:        make(map[string]*Client),
 	}
@@ -310,6 +410,8 @@ func main() {
 	http.HandleFunc("/ws", gateway.handleWebSocket)
 	http.HandleFunc("/login", gateway.handleLogin)
 	http.HandleFunc("/register", gateway.handleRegister)
+	http.HandleFunc("/user/", gateway.handleGetUser)
+	http.HandleFunc("/chat/history", gateway.handleGetChatHistory)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "/app/demo/index.html")
 	})

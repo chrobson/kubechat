@@ -130,6 +130,62 @@
             border-radius: 50%;
             margin-right: 5px;
         }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #007bff;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 1000;
+            max-width: 300px;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s ease;
+        }
+        .notification.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        .notification .notification-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .notification .notification-body {
+            font-size: 14px;
+        }
+        .notification .notification-close {
+            position: absolute;
+            top: 5px;
+            right: 10px;
+            background: none;
+            border: none;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 0;
+            width: 20px;
+            height: 20px;
+        }
+        .user-list li.has-notification {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+        }
+        .user-list li.has-notification:hover {
+            background: #ffeaa7;
+        }
+        .notification-badge {
+            background: #dc3545;
+            color: white;
+            border-radius: 50%;
+            padding: 2px 6px;
+            font-size: 12px;
+            margin-left: 5px;
+            min-width: 18px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -138,6 +194,8 @@
     <div id="status" class="status disconnected">
         Disconnected - Please login first
     </div>
+    
+    <!-- Notification container will be added here dynamically -->
 
     <div class="container">
         <!-- Authentication Panel -->
@@ -176,8 +234,13 @@
     <script>
         let ws = null;
         let currentUser = null;
+        let currentUsername = null;
         let currentRecipient = null;
         let userToken = null;
+        let chatHistory = {}; // Store messages per user
+        let userNames = {}; // Store usernames by user ID
+        let unreadCounts = {}; // Store unread message counts per user
+        let notificationPermission = false;
 
         async function register() {
             const username = document.getElementById('username').value;
@@ -238,11 +301,21 @@
                 
                 if (result.success) {
                     currentUser = result.user_id;
+                    currentUsername = username;
                     userToken = result.token;
+                    
+                    // Clear chat history when new user logs in
+                    chatHistory = {};
+                    userNames = {};
+                    unreadCounts = {};
+                    userNames[currentUser] = username;
                     
                     document.getElementById('currentUser').textContent = username;
                     document.getElementById('loginForm').style.display = 'none';
                     document.getElementById('userInfo').style.display = 'block';
+                    
+                    // Request notification permission
+                    requestNotificationPermission();
                     
                     connectWebSocket();
                 } else {
@@ -258,8 +331,12 @@
                 ws.close();
             }
             currentUser = null;
+            currentUsername = null;
             userToken = null;
             currentRecipient = null;
+            chatHistory = {};
+            userNames = {};
+            unreadCounts = {};
             
             document.getElementById('loginForm').style.display = 'block';
             document.getElementById('userInfo').style.display = 'none';
@@ -285,7 +362,7 @@
                 
                 switch (data.type) {
                     case 'new_message':
-                        displayMessage(data.content, false);
+                        handleIncomingMessage(data.content);
                         break;
                     case 'online_users':
                         updateUserList(data.content);
@@ -339,18 +416,108 @@
         }
 
         function displayMessage(message, isSent) {
+            // Determine the chat partner
+            const chatPartner = isSent ? currentRecipient : message.sender_id;
+            
+            // Store message in history
+            if (!chatHistory[chatPartner]) {
+                chatHistory[chatPartner] = [];
+            }
+            
+            const messageObj = {
+                content: message.content,
+                isSent: isSent,
+                timestamp: new Date().toLocaleTimeString(),
+                senderId: message.sender_id || currentUser,
+                recipientId: message.recipient_id || currentRecipient,
+                messageId: message.message_id // Add message ID to avoid duplicates
+            };
+            
+            // Check for duplicates before adding
+            const isDuplicate = chatHistory[chatPartner].some(existing => 
+                existing.messageId === messageObj.messageId ||
+                (existing.content === messageObj.content && 
+                 existing.senderId === messageObj.senderId &&
+                 Math.abs(new Date('1970-01-01T' + existing.timestamp) - new Date('1970-01-01T' + messageObj.timestamp)) < 2000)
+            );
+            
+            if (!isDuplicate) {
+                chatHistory[chatPartner].push(messageObj);
+                
+                // Only display if this is the current chat
+                if (chatPartner === currentRecipient) {
+                    addMessageToUI(messageObj);
+                }
+            }
+        }
+        
+        function addMessageToUI(messageObj) {
             const messagesDiv = document.getElementById('messages');
             const messageDiv = document.createElement('div');
-            messageDiv.className = 'message ' + (isSent ? 'sent' : 'received');
+            messageDiv.className = 'message ' + (messageObj.isSent ? 'sent' : 'received');
             
-            const time = new Date().toLocaleTimeString();
             messageDiv.innerHTML = `
-                <div>${message.content}</div>
-                <small>${time}</small>
+                <div>${messageObj.content}</div>
+                <small>${messageObj.timestamp}</small>
             `;
             
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        async function loadChatHistory(userId) {
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = '';
+            
+            try {
+                // First try to load from server
+                const response = await fetch(`/chat/history?user1=${currentUser}&user2=${userId}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Clear local cache for this user
+                    chatHistory[userId] = [];
+                    
+                    // Process server messages and add to local cache
+                    if (data.messages && data.messages.length > 0) {
+                        // Sort messages by timestamp (oldest first)
+                        const sortedMessages = data.messages.sort((a, b) => {
+                            const timeA = new Date(a.timestamp.seconds * 1000);
+                            const timeB = new Date(b.timestamp.seconds * 1000);
+                            return timeA - timeB;
+                        });
+                        
+                        sortedMessages.forEach(serverMessage => {
+                            const messageObj = {
+                                content: serverMessage.content,
+                                isSent: serverMessage.sender_id === currentUser,
+                                timestamp: new Date(serverMessage.timestamp.seconds * 1000).toLocaleTimeString(),
+                                senderId: serverMessage.sender_id,
+                                recipientId: serverMessage.recipient_id
+                            };
+                            
+                            chatHistory[userId].push(messageObj);
+                            addMessageToUI(messageObj);
+                        });
+                    }
+                } else {
+                    console.log('Failed to load chat history from server, using local cache');
+                    // Fallback to local cache
+                    if (chatHistory[userId]) {
+                        chatHistory[userId].forEach(messageObj => {
+                            addMessageToUI(messageObj);
+                        });
+                    }
+                }
+            } catch (error) {
+                console.log('Error loading chat history:', error);
+                // Fallback to local cache
+                if (chatHistory[userId]) {
+                    chatHistory[userId].forEach(messageObj => {
+                        addMessageToUI(messageObj);
+                    });
+                }
+            }
         }
 
         function getOnlineUsers() {
@@ -368,15 +535,46 @@
             users.forEach(userId => {
                 if (userId !== currentUser) {
                     const li = document.createElement('li');
-                    li.innerHTML = `<span class="online-indicator"></span>User ${userId.substring(0, 8)}...`;
+                    const username = userNames[userId] || `User ${userId.substring(0, 8)}...`;
+                    const unreadCount = unreadCounts[userId] || 0;
+                    
+                    let content = `<span class="online-indicator"></span>${username}`;
+                    if (unreadCount > 0) {
+                        content += `<span class="notification-badge">${unreadCount}</span>`;
+                        li.className = 'has-notification';
+                    }
+                    
+                    li.innerHTML = content;
                     li.onclick = () => selectUser(userId, li);
                     li.dataset.userId = userId;
                     userList.appendChild(li);
+                    
+                    // Try to get username if we don't have it
+                    if (!userNames[userId]) {
+                        getUserInfo(userId);
+                    }
                 }
             });
         }
+        
+        async function getUserInfo(userId) {
+            try {
+                const response = await fetch(`/user/${userId}`);
+                if (response.ok) {
+                    const userInfo = await response.json();
+                    userNames[userId] = userInfo.username;
+                    // Update the specific user in the list
+                    const userElement = document.querySelector(`[data-user-id="${userId}"]`);
+                    if (userElement) {
+                        userElement.innerHTML = `<span class="online-indicator"></span>${userInfo.username}`;
+                    }
+                }
+            } catch (error) {
+                console.log('Could not get user info:', error);
+            }
+        }
 
-        function selectUser(userId, element) {
+        async function selectUser(userId, element) {
             // Remove active class from all users
             document.querySelectorAll('.user-list li').forEach(li => {
                 li.classList.remove('active');
@@ -386,8 +584,17 @@
             element.classList.add('active');
             
             currentRecipient = userId;
-            document.getElementById('chatWith').textContent = `User ${userId.substring(0, 8)}...`;
-            document.getElementById('messages').innerHTML = '';
+            const username = userNames[userId] || `User ${userId.substring(0, 8)}...`;
+            document.getElementById('chatWith').textContent = username;
+            
+            // Clear unread count for this user
+            if (unreadCounts[userId]) {
+                unreadCounts[userId] = 0;
+                updateUserListUnreadCounts();
+            }
+            
+            // Load chat history for this user (first from local cache, then from server)
+            await loadChatHistory(userId);
         }
 
         function handleUserStatus(status) {
@@ -399,6 +606,135 @@
         function handleKeyPress(event) {
             if (event.key === 'Enter') {
                 sendMessage();
+            }
+        }
+
+        // Notification functions
+        function requestNotificationPermission() {
+            if ('Notification' in window) {
+                Notification.requestPermission().then(function(permission) {
+                    notificationPermission = permission === 'granted';
+                });
+            }
+        }
+        
+        function showNotification(title, body, icon) {
+            // Show browser notification if permission granted
+            if (notificationPermission && 'Notification' in window) {
+                new Notification(title, {
+                    body: body,
+                    icon: icon || '/favicon.ico',
+                    requireInteraction: false,
+                    silent: false
+                });
+            }
+            
+            // Show in-page notification
+            showInPageNotification(title, body);
+        }
+        
+        function showInPageNotification(title, body) {
+            const notification = document.createElement('div');
+            notification.className = 'notification';
+            notification.innerHTML = `
+                <button class="notification-close" onclick="this.parentElement.remove()">&times;</button>
+                <div class="notification-title">${title}</div>
+                <div class="notification-body">${body}</div>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Trigger animation
+            setTimeout(() => {
+                notification.classList.add('show');
+            }, 100);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.classList.remove('show');
+                    setTimeout(() => {
+                        if (notification.parentElement) {
+                            notification.remove();
+                        }
+                    }, 300);
+                }
+            }, 5000);
+        }
+        
+        function handleIncomingMessage(message) {
+            const isFromCurrentChat = currentRecipient === message.sender_id;
+            
+            // Display message in chat if it's from current conversation
+            displayMessage(message, false);
+            
+            // If message is not from current chat, show notification
+            if (!isFromCurrentChat) {
+                const senderUsername = userNames[message.sender_id] || `User ${message.sender_id.substring(0, 8)}...`;
+                
+                // Increment unread count
+                if (!unreadCounts[message.sender_id]) {
+                    unreadCounts[message.sender_id] = 0;
+                }
+                unreadCounts[message.sender_id]++;
+                
+                // Update user list to show notification badge
+                updateUserListUnreadCounts();
+                
+                // Show notification
+                showNotification(
+                    `New message from ${senderUsername}`,
+                    message.content,
+                    null
+                );
+                
+                // Play notification sound
+                playNotificationSound();
+            }
+        }
+        
+        function updateUserListUnreadCounts() {
+            const userListItems = document.querySelectorAll('#userList li');
+            userListItems.forEach(li => {
+                const userId = li.dataset.userId;
+                const unreadCount = unreadCounts[userId] || 0;
+                const username = userNames[userId] || `User ${userId.substring(0, 8)}...`;
+                
+                // Remove existing notification styling
+                li.classList.remove('has-notification');
+                
+                let content = `<span class="online-indicator"></span>${username}`;
+                if (unreadCount > 0) {
+                    content += `<span class="notification-badge">${unreadCount}</span>`;
+                    li.className = 'has-notification';
+                }
+                
+                li.innerHTML = content;
+                li.onclick = () => selectUser(userId, li);
+            });
+        }
+        
+        function playNotificationSound() {
+            // Create a simple notification sound using Web Audio API
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.1);
+                
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.2);
+            } catch (e) {
+                // Fallback: just log if audio context fails
+                console.log('Notification sound failed:', e);
             }
         }
 
