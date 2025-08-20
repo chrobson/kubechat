@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	
+
 	chat "kubechat/proto/chat"
 	messagestore "kubechat/proto/messagestore"
 )
@@ -144,7 +144,7 @@ func main() {
 	if messageStoreURL == "" {
 		messageStoreURL = "localhost:50054"
 	}
-	conn, err := grpc.Dial(messageStoreURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(messageStoreURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Printf("Failed to connect to message store service: %v", err)
 	} else {

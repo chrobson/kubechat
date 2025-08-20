@@ -12,7 +12,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	
+
 	chat "kubechat/proto/chat"
 	presence "kubechat/proto/presence"
 	users "kubechat/proto/users"
@@ -210,12 +210,12 @@ func (g *Gateway) subscribeToUserMessages(userID string, client *Client) *nats.S
 			}
 		}
 	})
-	
+
 	if err != nil {
 		log.Printf("Failed to subscribe to user messages: %v", err)
 		return nil
 	}
-	
+
 	return sub
 }
 
@@ -359,7 +359,7 @@ func main() {
 	if usersURL == "" {
 		usersURL = "localhost:50051"
 	}
-	usersConn, err := grpc.Dial(usersURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	usersConn, err := grpc.NewClient(usersURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to users service: %v", err)
 	}
@@ -369,7 +369,7 @@ func main() {
 	if chatURL == "" {
 		chatURL = "localhost:50053"
 	}
-	chatConn, err := grpc.Dial(chatURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	chatConn, err := grpc.NewClient(chatURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to chat service: %v", err)
 	}
@@ -379,7 +379,7 @@ func main() {
 	if presenceURL == "" {
 		presenceURL = "localhost:50052"
 	}
-	presenceConn, err := grpc.Dial(presenceURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	presenceConn, err := grpc.NewClient(presenceURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to presence service: %v", err)
 	}
