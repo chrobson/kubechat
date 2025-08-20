@@ -10,6 +10,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -26,6 +28,17 @@ type Gateway struct {
 	clients        map[string]*Client
 	clientsMutex   sync.RWMutex
 }
+
+var (
+	wsConnections = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "gateway_ws_connections",
+		Help: "Current number of active WebSocket connections",
+	})
+	wsMessages = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "gateway_ws_messages_total",
+		Help: "Total number of WS messages sent to clients",
+	})
+)
 
 type Client struct {
 	UserID       string
@@ -65,6 +78,7 @@ func (g *Gateway) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Conn:   conn,
 		Send:   make(chan []byte, 256),
 	}
+	wsConnections.Inc()
 
 	// Subscribe to user's messages before adding to clients map
 	subscription := g.subscribeToUserMessages(userID, client)
@@ -107,6 +121,7 @@ func (g *Gateway) readPump(client *Client) {
 		})
 
 		client.Conn.Close()
+		wsConnections.Dec()
 	}()
 
 	for {
@@ -175,6 +190,7 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 
 		data, _ := json.Marshal(response)
 		client.Send <- data
+		wsMessages.Inc()
 	}
 }
 
@@ -330,7 +346,7 @@ func (g *Gateway) handleGetChatHistory(w http.ResponseWriter, r *http.Request) {
 	// Extract parameters from query string
 	userID1 := r.URL.Query().Get("user1")
 	userID2 := r.URL.Query().Get("user2")
-	
+
 	if userID1 == "" || userID2 == "" {
 		http.Error(w, "Both user1 and user2 parameters required", http.StatusBadRequest)
 		return
@@ -354,6 +370,17 @@ func (g *Gateway) handleGetChatHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	// Metrics
+	prometheus.MustRegister(wsConnections, wsMessages)
+	metricsAddr := os.Getenv("METRICS_ADDR_GATEWAY")
+	if metricsAddr == "" {
+		metricsAddr = ":9090"
+	}
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		log.Printf("Gateway metrics on %s", metricsAddr)
+		_ = http.ListenAndServe(metricsAddr, nil)
+	}()
 	// Connect to gRPC services
 	usersURL := os.Getenv("USERS_SERVICE_URL")
 	if usersURL == "" {

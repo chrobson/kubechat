@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -25,7 +28,19 @@ type server struct {
 	messageStoreConn messagestore.MessageStoreServiceClient
 }
 
+var (
+	publishLatency = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "chat_nats_publish_seconds",
+		Help:    "Latency of NATS publish operations",
+		Buckets: prometheus.DefBuckets,
+	})
+)
+
 func (s *server) SendMessage(ctx context.Context, req *chat.SendMessageRequest) (*chat.SendMessageResponse, error) {
+	// Set a timeout for the whole operation
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	messageID := generateMessageID()
 	now := time.Now()
 
@@ -48,6 +63,7 @@ func (s *server) SendMessage(ctx context.Context, req *chat.SendMessageRequest) 
 
 	// Publish to recipient's channel
 	recipientSubject := "chat.messages." + req.RecipientId
+	publishStart := time.Now()
 	err = s.natsConn.Publish(recipientSubject, messageData)
 	if err != nil {
 		return &chat.SendMessageResponse{
@@ -55,6 +71,7 @@ func (s *server) SendMessage(ctx context.Context, req *chat.SendMessageRequest) 
 			Error:   "Failed to publish message to recipient",
 		}, err
 	}
+	publishLatency.Observe(time.Since(publishStart).Seconds())
 
 	// Also publish to sender's channel so they can see their own message
 	senderSubject := "chat.messages." + req.SenderId
@@ -127,6 +144,18 @@ func generateMessageID() string {
 }
 
 func main() {
+	// Metrics
+	prometheus.MustRegister(publishLatency)
+	metricsAddr := os.Getenv("METRICS_ADDR_CHAT")
+	if metricsAddr == "" {
+		metricsAddr = ":9092"
+	}
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		log.Printf("Chat metrics on %s", metricsAddr)
+		_ = http.ListenAndServe(metricsAddr, nil)
+	}()
+
 	// Connect to NATS
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {

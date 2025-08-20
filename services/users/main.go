@@ -8,13 +8,17 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
-	
+	"os"
+
 	users "kubechat/proto/users"
 )
 
@@ -28,11 +32,28 @@ type User struct {
 
 type server struct {
 	users.UnimplementedUsersServiceServer
-	users map[string]*User
-	mutex sync.RWMutex
+	users    map[string]*User
+	mutex    sync.RWMutex
+	jwtSecret []byte
 }
 
+var (
+	loginSuccess = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "users_login_success_total",
+		Help: "Number of successful logins",
+	})
+	loginFailure = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "users_login_failure_total",
+		Help: "Number of failed logins",
+	})
+)
+
 func (s *server) CreateUser(ctx context.Context, req *users.CreateUserRequest) (*users.CreateUserResponse, error) {
+	// Apply timeout to bound work
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -76,6 +97,10 @@ func (s *server) CreateUser(ctx context.Context, req *users.CreateUserRequest) (
 }
 
 func (s *server) LoginUser(ctx context.Context, req *users.LoginUserRequest) (*users.LoginUserResponse, error) {
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -104,7 +129,7 @@ func (s *server) LoginUser(ctx context.Context, req *users.LoginUserRequest) (*u
 	}
 
 	// Generate JWT token
-	token, err := generateJWT(user.ID)
+	token, err := s.generateJWT(user.ID)
 	if err != nil {
 		return &users.LoginUserResponse{
 			Success: false,
@@ -113,6 +138,7 @@ func (s *server) LoginUser(ctx context.Context, req *users.LoginUserRequest) (*u
 	}
 
 	user.Online = true
+	loginSuccess.Inc()
 
 	return &users.LoginUserResponse{
 		UserId:  user.ID,
@@ -123,6 +149,10 @@ func (s *server) LoginUser(ctx context.Context, req *users.LoginUserRequest) (*u
 }
 
 func (s *server) GetUser(ctx context.Context, req *users.GetUserRequest) (*users.GetUserResponse, error) {
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -150,17 +180,38 @@ func generateUserID(username string) string {
 	return hex.EncodeToString(hash[:16]) // Use first 16 bytes
 }
 
-func generateJWT(userID string) (string, error) {
+func (s *server) generateJWT(userID string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": userID,
 		"exp":     time.Now().Add(time.Hour * 24).Unix(),
 	})
 
-	tokenString, err := token.SignedString([]byte("your-secret-key"))
+	tokenString, err := token.SignedString(s.jwtSecret)
 	return tokenString, err
 }
 
 func main() {
+	// Metrics registry and endpoint
+	prometheus.MustRegister(loginSuccess, loginFailure)
+	metricsAddr := os.Getenv("METRICS_ADDR_USERS")
+	if metricsAddr == "" {
+		metricsAddr = ":9091"
+	}
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		log.Printf("Users metrics on %s", metricsAddr)
+		_ = http.ListenAndServe(metricsAddr, nil)
+	}()
+
+	// JWT secret
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		log.Println("WARNING: JWT_SECRET not set; generating ephemeral secret (not for production)")
+		buf := make([]byte, 32)
+		_, _ = rand.Read(buf)
+		secret = hex.EncodeToString(buf)
+	}
+
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
@@ -168,7 +219,8 @@ func main() {
 
 	s := grpc.NewServer()
 	userServer := &server{
-		users: make(map[string]*User),
+		users:    make(map[string]*User),
+		jwtSecret: []byte(secret),
 	}
 
 	users.RegisterUsersServiceServer(s, userServer)

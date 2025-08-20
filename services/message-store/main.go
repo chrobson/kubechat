@@ -7,14 +7,17 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	_ "github.com/lib/pq"
+	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	
+
 	chat "kubechat/proto/chat"
 	messagestore "kubechat/proto/messagestore"
 )
@@ -25,10 +28,18 @@ type server struct {
 	natsConn *nats.Conn
 }
 
+var (
+	dbQueryLatency = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "messagestore_db_query_seconds",
+		Help:    "Latency of DB queries",
+		Buckets: prometheus.DefBuckets,
+	})
+)
+
 func (s *server) StoreMessage(ctx context.Context, req *messagestore.StoreMessageRequest) (*messagestore.StoreMessageResponse, error) {
 	// If database is not available, just log and return success
 	if s.db == nil {
-		log.Printf("Database not available, message not persisted: %s from %s to %s", 
+		log.Printf("Database not available, message not persisted: %s from %s to %s",
 			req.Content, req.SenderId, req.RecipientId)
 		return &messagestore.StoreMessageResponse{
 			Success: true,
@@ -82,6 +93,7 @@ func (s *server) GetMessageHistory(ctx context.Context, req *messagestore.GetMes
 		limit = 50 // Default limit
 	}
 
+	qStart := time.Now()
 	rows, err := s.db.QueryContext(ctx, query, req.UserId1, req.UserId2, limit, req.Offset)
 	if err != nil {
 		log.Printf("Failed to query message history: %v", err)
@@ -90,6 +102,7 @@ func (s *server) GetMessageHistory(ctx context.Context, req *messagestore.GetMes
 		}, nil
 	}
 	defer rows.Close()
+	dbQueryLatency.Observe(time.Since(qStart).Seconds())
 
 	var messages []*messagestore.StoredMessage
 	for rows.Next() {
@@ -187,32 +200,32 @@ func initDB() (*sql.DB, error) {
 	if dbHost == "" {
 		dbHost = "postgres" // Docker service name
 	}
-	
+
 	dbPort := os.Getenv("DB_PORT")
 	if dbPort == "" {
 		dbPort = "5432"
 	}
-	
+
 	dbUser := os.Getenv("DB_USER")
 	if dbUser == "" {
 		dbUser = "user"
 	}
-	
+
 	dbPassword := os.Getenv("DB_PASSWORD")
 	if dbPassword == "" {
 		dbPassword = "password"
 	}
-	
+
 	dbName := os.Getenv("DB_NAME")
 	if dbName == "" {
 		dbName = "kubechat"
 	}
-	
-	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", 
+
+	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
 		dbUser, dbPassword, dbHost, dbPort, dbName)
-	
+
 	log.Printf("Attempting to connect to database: %s", connStr)
-	
+
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		log.Printf("Failed to open database connection: %v", err)
@@ -251,6 +264,18 @@ func initDB() (*sql.DB, error) {
 }
 
 func main() {
+	// Metrics
+	prometheus.MustRegister(dbQueryLatency)
+	metricsAddr := os.Getenv("METRICS_ADDR_STORE")
+	if metricsAddr == "" {
+		metricsAddr = ":9093"
+	}
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		log.Printf("Message-store metrics on %s", metricsAddr)
+		_ = http.ListenAndServe(metricsAddr, nil)
+	}()
+
 	// Connect to database
 	db, err := initDB()
 	if err != nil {
