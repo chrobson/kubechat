@@ -151,7 +151,7 @@ func (s *server) DeleteMessage(ctx context.Context, req *messagestore.DeleteMess
 }
 
 func (s *server) subscribeToMessages() {
-	sub, err := s.natsConn.Subscribe("chat.messages.*", func(msg *nats.Msg) {
+	_, err := s.natsConn.Subscribe("chat.messages.*", func(msg *nats.Msg) {
 		var message chat.Message
 		err := json.Unmarshal(msg.Data, &message)
 		if err != nil {
@@ -178,7 +178,6 @@ func (s *server) subscribeToMessages() {
 		log.Printf("Failed to subscribe to messages: %v", err)
 	} else {
 		log.Println("Subscribed to chat messages from NATS")
-		defer sub.Unsubscribe()
 	}
 }
 

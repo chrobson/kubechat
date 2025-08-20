@@ -76,8 +76,8 @@ func (s *server) CreateUser(ctx context.Context, req *users.CreateUserRequest) (
 }
 
 func (s *server) LoginUser(ctx context.Context, req *users.LoginUserRequest) (*users.LoginUserResponse, error) {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
 	var user *User
 	for _, u := range s.users {
