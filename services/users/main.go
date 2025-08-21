@@ -12,12 +12,13 @@ import (
 	"sync"
 	"time"
 
+	"os"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
-	"os"
 
 	users "kubechat/proto/users"
 )
@@ -32,8 +33,8 @@ type User struct {
 
 type server struct {
 	users.UnimplementedUsersServiceServer
-	users    map[string]*User
-	mutex    sync.RWMutex
+	users     map[string]*User
+	mutex     sync.RWMutex
 	jwtSecret []byte
 }
 
@@ -219,7 +220,7 @@ func main() {
 
 	s := grpc.NewServer()
 	userServer := &server{
-		users:    make(map[string]*User),
+		users:     make(map[string]*User),
 		jwtSecret: []byte(secret),
 	}
 
