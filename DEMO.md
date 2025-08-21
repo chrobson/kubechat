@@ -14,7 +14,7 @@ The fastest way to try out KubeChat is using the demo docker-compose setup.
 1. **Clone and start the demo:**
 ```bash
 cd docker
-docker-compose -f docker-compose.demo.yml up --build
+docker-compose -f docker-compose.simple.yml up --build
 ```
 
 2. **Wait for all services to start** (usually takes 30-60 seconds)
@@ -122,18 +122,18 @@ http://localhost:8222
 View logs for any service:
 ```bash
 # View all logs
-docker-compose -f docker-compose.demo.yml logs -f
+docker-compose -f docker-compose.simple.yml logs -f
 
 # View specific service logs
-docker-compose -f docker-compose.demo.yml logs -f api-gateway
-docker-compose -f docker-compose.demo.yml logs -f chat-service
-docker-compose -f docker-compose.demo.yml logs -f users-service
+docker-compose -f docker-compose.simple.yml logs -f api-gateway
+docker-compose -f docker-compose.simple.yml logs -f chat-service
+docker-compose -f docker-compose.simple.yml logs -f users-service
 ```
 
 #### Database Access
 Connect to PostgreSQL:
 ```bash
-docker-compose -f docker-compose.demo.yml exec postgres psql -U user -d kubechat
+docker-compose -f docker-compose.simple.yml exec postgres psql -U user -d kubechat
 ```
 
 Then run SQL queries:
@@ -148,17 +148,17 @@ SELECT COUNT(*) FROM messages;
 ### Stopping the Demo
 
 ```bash
-docker-compose -f docker-compose.demo.yml down
+docker-compose -f docker-compose.simple.yml down
 
 # Remove volumes (this will delete all data)
-docker-compose -f docker-compose.demo.yml down -v
+docker-compose -f docker-compose.simple.yml down -v
 ```
 
 ### Troubleshooting
 
 #### Services not starting?
 - Check if ports are available: `netstat -tulpn | grep -E '(8080|4222|5432|5005[1-4])'`
-- Check logs: `docker-compose -f docker-compose.demo.yml logs`
+- Check logs: `docker-compose -f docker-compose.simple.yml logs`
 
 #### Can't connect to chat?
 - Make sure you're logged in first
@@ -168,11 +168,11 @@ docker-compose -f docker-compose.demo.yml down -v
 #### Messages not appearing?
 - Ensure both users are online
 - Check browser console for errors
-- Verify NATS is running: `docker-compose -f docker-compose.demo.yml logs nats`
+- Verify NATS is running: `docker-compose -f docker-compose.simple.yml logs nats`
 
 #### Database issues?
 - Wait for PostgreSQL to fully start (check healthcheck)
-- Check database logs: `docker-compose -f docker-compose.demo.yml logs postgres`
+- Check database logs: `docker-compose -f docker-compose.simple.yml logs postgres`
 
 ### Architecture in Demo
 
