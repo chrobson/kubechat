@@ -24,7 +24,8 @@ services:
     ports:
       - "50051:50051"
     depends_on:
-      - nats
+      nats:
+        condition: service_started
     environment:
       - NATS_URL=nats://nats:4222
     restart: unless-stopped
@@ -36,7 +37,8 @@ services:
     ports:
       - "50052:50052"
     depends_on:
-      - nats
+      nats:
+        condition: service_started
     environment:
       - NATS_URL=nats://nats:4222
     restart: unless-stopped
@@ -48,8 +50,10 @@ services:
     ports:
       - "50054:50054"
     depends_on:
-      - nats
-      - postgres
+      nats:
+        condition: service_started
+      postgres:
+        condition: service_started
     environment:
       - DATABASE_URL=postgres://user:password@postgres:5432/kubechat?sslmode=disable
       - NATS_URL=nats://nats:4222
@@ -62,8 +66,10 @@ services:
     ports:
       - "50053:50053"
     depends_on:
-      - nats
-      - message-store-service
+      nats:
+        condition: service_started
+      message-store-service:
+        condition: service_started
     environment:
       - NATS_URL=nats://nats:4222
       - MESSAGE_STORE_URL=message-store-service:50054
@@ -76,10 +82,14 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - users-service
-      - chat-service
-      - presence-service
-      - nats
+      users-service:
+        condition: service_started
+      chat-service:
+        condition: service_started
+      presence-service:
+        condition: service_started
+      nats:
+        condition: service_started
     environment:
       - NATS_URL=nats://nats:4222
       - USERS_SERVICE_URL=users-service:50051
