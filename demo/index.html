@@ -348,7 +348,7 @@
         }
 
         function connectWebSocket() {
-            const wsUrl = `ws://localhost:8080/ws?user_id=${currentUser}`;
+            const wsUrl = `ws://${window.location.host}/ws?token=${userToken}`;
             ws = new WebSocket(wsUrl);
 
             ws.onopen = function(event) {
@@ -468,7 +468,7 @@
             
             try {
                 // First try to load from server
-                const response = await fetch(`/chat/history?user1=${currentUser}&user2=${userId}`);
+                const response = await fetch(`/chat/history?user1=${currentUser}&user2=${userId}&token=${userToken}`);
                 if (response.ok) {
                     const data = await response.json();
                     
@@ -582,7 +582,7 @@
         
         async function getUserInfo(userId) {
             try {
-                const response = await fetch(`/user/${userId}`);
+                const response = await fetch(`/user/${userId}?token=${userToken}`);
                 if (response.ok) {
                     const userInfo = await response.json();
                     userNames[userId] = userInfo.username;

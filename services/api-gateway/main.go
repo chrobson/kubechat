@@ -3,15 +3,19 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -27,6 +31,7 @@ type Gateway struct {
 	natsConn       *nats.Conn
 	clients        map[string]*Client
 	clientsMutex   sync.RWMutex
+	jwtSecret      []byte
 }
 
 var (
@@ -45,6 +50,7 @@ type Client struct {
 	Conn         *websocket.Conn
 	Send         chan []byte
 	Subscription *nats.Subscription
+	Limiter      *rate.Limiter
 }
 
 type Message struct {
@@ -60,23 +66,81 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+func (g *Gateway) verifyToken(tokenString string) (string, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return g.jwtSecret, nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		if userID, ok := claims["user_id"].(string); ok {
+			return userID, nil
+		}
+	}
+
+	return "", fmt.Errorf("invalid token claims")
+}
+
+func (g *Gateway) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get token from Authorization header or query param
+		authHeader := r.Header.Get("Authorization")
+		tokenString := ""
+
+		if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+			tokenString = authHeader[7:]
+		} else {
+			tokenString = r.URL.Query().Get("token")
+		}
+
+		if tokenString == "" {
+			http.Error(w, "Unauthorized: Token required", http.StatusUnauthorized)
+			return
+		}
+
+		userID, err := g.verifyToken(tokenString)
+		if err != nil {
+			http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		// Add userID to context
+		ctx := context.WithValue(r.Context(), "user_id", userID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	}
+}
+
 func (g *Gateway) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		http.Error(w, "Token required", http.StatusUnauthorized)
+		return
+	}
+
+	userID, err := g.verifyToken(token)
+	if err != nil {
+		log.Printf("Token verification failed: %v", err)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
 
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		conn.Close()
-		return
-	}
-
 	client := &Client{
-		UserID: userID,
-		Conn:   conn,
-		Send:   make(chan []byte, 256),
+		UserID:  userID,
+		Conn:    conn,
+		Send:    make(chan []byte, 256),
+		Limiter: rate.NewLimiter(rate.Every(200*time.Millisecond), 5), // 5 msg/s burst
 	}
 	wsConnections.Inc()
 
@@ -130,6 +194,12 @@ func (g *Gateway) readPump(client *Client) {
 		if err != nil {
 			log.Printf("WebSocket read error: %v", err)
 			break
+		}
+
+		// Rate limiting
+		if !client.Limiter.Allow() {
+			log.Printf("Rate limit exceeded for user %s", client.UserID)
+			continue
 		}
 
 		g.handleMessage(client, &msg)
@@ -352,6 +422,13 @@ func (g *Gateway) handleGetChatHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify that the authenticated user is one of the participants
+	authUserID, _ := r.Context().Value("user_id").(string)
+	if userID1 != authUserID && userID2 != authUserID {
+		http.Error(w, "Forbidden: You can only access your own chat history", http.StatusForbidden)
+		return
+	}
+
 	// Get chat history from chat service
 	resp, err := g.chatClient.GetMessageHistory(context.Background(), &chat.GetMessageHistoryRequest{
 		UserId1: userID1,
@@ -423,12 +500,20 @@ func main() {
 	}
 	defer nc.Close()
 
+	// JWT secret
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		log.Println("WARNING: JWT_SECRET not set; using default for demo")
+		secret = "default_secret_change_me"
+	}
+
 	gateway := &Gateway{
 		usersClient:    users.NewUsersServiceClient(usersConn),
 		chatClient:     chat.NewChatServiceClient(chatConn),
 		presenceClient: presence.NewPresenceServiceClient(presenceConn),
 		natsConn:       nc,
 		clients:        make(map[string]*Client),
+		jwtSecret:      []byte(secret),
 	}
 
 	// Subscribe to user status updates
@@ -438,8 +523,8 @@ func main() {
 	http.HandleFunc("/ws", gateway.handleWebSocket)
 	http.HandleFunc("/login", gateway.handleLogin)
 	http.HandleFunc("/register", gateway.handleRegister)
-	http.HandleFunc("/user/", gateway.handleGetUser)
-	http.HandleFunc("/chat/history", gateway.handleGetChatHistory)
+	http.HandleFunc("/user/", gateway.authMiddleware(gateway.handleGetUser))
+	http.HandleFunc("/chat/history", gateway.authMiddleware(gateway.handleGetChatHistory))
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "/app/demo/index.html")
 	})
