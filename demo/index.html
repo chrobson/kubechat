@@ -217,8 +217,9 @@
         <div class="panel chat-panel">
             <h3>Chat with: <span id="chatWith">Select a user</span></h3>
             <div id="messages" class="messages"></div>
+            <div id="typingIndicator" style="font-size: 12px; color: #666; height: 1.5em; margin-bottom: 5px;"></div>
             <div class="message-input">
-                <input type="text" id="messageInput" placeholder="Type a message..." onkeypress="handleKeyPress(event)">
+                <input type="text" id="messageInput" placeholder="Type a message..." onkeypress="handleKeyPress(event)" oninput="handleTyping()">
                 <button onclick="sendMessage()">Send</button>
             </div>
         </div>
@@ -240,7 +241,84 @@
         let chatHistory = {}; // Store messages per user
         let userNames = {}; // Store usernames by user ID
         let unreadCounts = {}; // Store unread message counts per user
+        let typingTimeout = null;
+        let isTyping = false;
+        let remoteTypingUsers = new Set();
         let notificationPermission = false;
+
+        function handleTyping() {
+            if (!currentRecipient || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+            if (!isTyping) {
+                isTyping = true;
+                ws.send(JSON.stringify({
+                    type: 'typing_event',
+                    content: {
+                        recipient_id: currentRecipient,
+                        is_typing: true
+                    }
+                }));
+            }
+
+            if (typingTimeout) clearTimeout(typingTimeout);
+            typingTimeout = setTimeout(() => {
+                isTyping = false;
+                ws.send(JSON.stringify({
+                    type: 'typing_event',
+                    content: {
+                        recipient_id: currentRecipient,
+                        is_typing: false
+                    }
+                }));
+            }, 3000);
+        }
+
+        function handleRemoteTyping(event) {
+            if (event.recipient_id !== currentUser) return;
+            
+            if (event.is_typing) {
+                remoteTypingUsers.add(event.sender_id);
+            } else {
+                remoteTypingUsers.delete(event.sender_id);
+            }
+            
+            updateTypingDisplay();
+        }
+        
+        function updateTypingDisplay() {
+            const typingDiv = document.getElementById('typingIndicator');
+            if (currentRecipient && remoteTypingUsers.has(currentRecipient)) {
+                const username = userNames[currentRecipient] || 'User';
+                typingDiv.textContent = `${username} is typing...`;
+            } else {
+                typingDiv.textContent = '';
+            }
+        }
+        
+        function handleReadReceipt(receipt) {
+            if (receipt.recipient_id !== currentUser) return;
+            
+            // Update local chat history to show message as read
+            const chatPartner = receipt.sender_id;
+            if (chatHistory[chatPartner]) {
+                const message = chatHistory[chatPartner].find(m => m.messageId === receipt.message_id);
+                if (message) {
+                    message.isRead = true;
+                    // Re-render chat if currently viewing
+                    if (currentRecipient === chatPartner) {
+                        loadChatFromCache(chatPartner);
+                    }
+                }
+            }
+        }
+        
+        function loadChatFromCache(userId) {
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = '';
+            if (chatHistory[userId]) {
+                chatHistory[userId].forEach(addMessageToUI);
+            }
+        }
 
         async function register() {
             const username = document.getElementById('username').value;
@@ -364,6 +442,12 @@
                     case 'new_message':
                         handleIncomingMessage(data.content);
                         break;
+                    case 'typing_event':
+                        handleRemoteTyping(data.content);
+                        break;
+                    case 'read_receipt':
+                        handleReadReceipt(data.content);
+                        break;
                     case 'online_users':
                         updateUserList(data.content);
                         break;
@@ -450,9 +534,10 @@
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message ' + (messageObj.isSent ? 'sent' : 'received');
             
+            const readStatus = messageObj.isSent ? (messageObj.isRead ? ' ✓✓' : ' ✓') : '';
             messageDiv.innerHTML = `
                 <div>${messageObj.content}</div>
-                <small>${messageObj.timestamp}</small>
+                <small>${messageObj.timestamp}${readStatus}</small>
             `;
             
             messagesDiv.appendChild(messageDiv);
@@ -697,6 +782,11 @@
                 // Message received from another user - show as received message
                 displayMessage(message, false);
                 
+                // If message is the current chat, send read receipt
+                if (isFromCurrentChat) {
+                    sendReadReceipt(message);
+                }
+                
                 // If message is not from current chat, show notification
                 if (!isFromCurrentChat) {
                     const senderUsername = userNames[message.sender_id] || `User ${message.sender_id.substring(0, 8)}...`;
@@ -720,6 +810,18 @@
                     // Play notification sound
                     playNotificationSound();
                 }
+            }
+        }
+        
+        function sendReadReceipt(message) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'read_receipt',
+                    content: {
+                        recipient_id: message.sender_id,
+                        message_id: message.message_id
+                    }
+                }));
             }
         }
         

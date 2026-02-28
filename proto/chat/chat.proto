@@ -11,6 +11,18 @@ service ChatService {
   rpc GetMessageHistory(GetMessageHistoryRequest) returns (GetMessageHistoryResponse);
 }
 
+message TypingEvent {
+  string sender_id = 1;
+  string recipient_id = 2;
+  bool is_typing = 3;
+}
+
+message ReadReceipt {
+  string sender_id = 1; // User who read the message
+  string recipient_id = 2; // User who sent the original message
+  string message_id = 3;
+}
+
 message SendMessageRequest {
   string sender_id = 1;
   string recipient_id = 2;

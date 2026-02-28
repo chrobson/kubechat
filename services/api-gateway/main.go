@@ -46,11 +46,11 @@ var (
 )
 
 type Client struct {
-	UserID       string
-	Conn         *websocket.Conn
-	Send         chan []byte
-	Subscription *nats.Subscription
-	Limiter      *rate.Limiter
+	UserID        string
+	Conn          *websocket.Conn
+	Send          chan []byte
+	Subscriptions []*nats.Subscription
+	Limiter       *rate.Limiter
 }
 
 type Message struct {
@@ -144,16 +144,19 @@ func (g *Gateway) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	wsConnections.Inc()
 
-	// Subscribe to user's messages before adding to clients map
-	subscription := g.subscribeToUserMessages(userID, client)
-	client.Subscription = subscription
+	// Subscribe to user's messages and events before adding to clients map
+	msgSub := g.subscribeToUserMessages(userID, client)
+	eventSub := g.subscribeToUserEvents(userID, client)
+	client.Subscriptions = []*nats.Subscription{msgSub, eventSub}
 
 	g.clientsMutex.Lock()
 	// Check if user already has a connection and clean it up
 	if existingClient, exists := g.clients[userID]; exists {
 		existingClient.Conn.Close()
-		if existingClient.Subscription != nil {
-			existingClient.Subscription.Unsubscribe()
+		for _, sub := range existingClient.Subscriptions {
+			if sub != nil {
+				sub.Unsubscribe()
+			}
 		}
 	}
 	g.clients[userID] = client
@@ -175,8 +178,10 @@ func (g *Gateway) readPump(client *Client) {
 		g.clientsMutex.Unlock()
 
 		// Unsubscribe from NATS messages
-		if client.Subscription != nil {
-			client.Subscription.Unsubscribe()
+		for _, sub := range client.Subscriptions {
+			if sub != nil {
+				sub.Unsubscribe()
+			}
 		}
 
 		// Set user offline
@@ -246,6 +251,36 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 			}
 		}
 
+	case "typing_event":
+		if content, ok := msg.Content.(map[string]interface{}); ok {
+			recipientID, _ := content["recipient_id"].(string)
+			isTyping, _ := content["is_typing"].(bool)
+			
+			event := chat.TypingEvent{
+				SenderId:    client.UserID,
+				RecipientId: recipientID,
+				IsTyping:    isTyping,
+			}
+			
+			data, _ := json.Marshal(event)
+			g.natsConn.Publish("chat.events."+recipientID, data)
+		}
+
+	case "read_receipt":
+		if content, ok := msg.Content.(map[string]interface{}); ok {
+			recipientID, _ := content["recipient_id"].(string)
+			messageID, _ := content["message_id"].(string)
+			
+			receipt := chat.ReadReceipt{
+				SenderId:    client.UserID,
+				RecipientId: recipientID,
+				MessageId:   messageID,
+			}
+			
+			data, _ := json.Marshal(receipt)
+			g.natsConn.Publish("chat.events."+recipientID, data)
+		}
+
 	case "get_online_users":
 		resp, err := g.presenceClient.GetOnlineUsers(context.Background(), &presence.GetOnlineUsersRequest{})
 		if err != nil {
@@ -262,6 +297,52 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 		client.Send <- data
 		wsMessages.Inc()
 	}
+}
+
+func (g *Gateway) subscribeToUserEvents(userID string, client *Client) *nats.Subscription {
+	subject := "chat.events." + userID
+	sub, err := g.natsConn.Subscribe(subject, func(msg *nats.Msg) {
+		g.clientsMutex.RLock()
+		currentClient, exists := g.clients[userID]
+		g.clientsMutex.RUnlock()
+
+		if exists && currentClient == client {
+			// Determine event type from JSON content
+			var raw map[string]interface{}
+			json.Unmarshal(msg.Data, &raw)
+			
+			var response Message
+			if _, ok := raw["is_typing"]; ok {
+				var event chat.TypingEvent
+				json.Unmarshal(msg.Data, &event)
+				response = Message{
+					Type:    "typing_event",
+					Content: event,
+				}
+			} else if _, ok := raw["message_id"]; ok {
+				var receipt chat.ReadReceipt
+				json.Unmarshal(msg.Data, &receipt)
+				response = Message{
+					Type:    "read_receipt",
+					Content: receipt,
+				}
+			}
+			
+			data, _ := json.Marshal(response)
+			select {
+			case client.Send <- data:
+			default:
+				// Channel probably closed
+			}
+		}
+	})
+
+	if err != nil {
+		log.Printf("Failed to subscribe to user events: %v", err)
+		return nil
+	}
+
+	return sub
 }
 
 func (g *Gateway) subscribeToUserMessages(userID string, client *Client) *nats.Subscription {
