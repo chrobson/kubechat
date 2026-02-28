@@ -16,6 +16,7 @@ build:
 	go build -o bin/chat-service ./services/chat
 	go build -o bin/presence-service ./services/presence
 	go build -o bin/messagestore-service ./services/message-store
+	go build -o bin/media-service ./services/media
 	go build -o bin/api-gateway ./services/api-gateway
 
 # Run individual services
@@ -30,6 +31,9 @@ run-presence:
 
 run-messagestore:
 	go run ./services/message-store
+
+run-media:
+	go run ./services/media
 
 run-gateway:
 	go run ./services/api-gateway

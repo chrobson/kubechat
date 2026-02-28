@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -29,6 +31,7 @@ type Gateway struct {
 	chatClient     chat.ChatServiceClient
 	presenceClient presence.PresenceServiceClient
 	natsConn       *nats.Conn
+	mediaProxy     *httputil.ReverseProxy
 	clients        map[string]*Client
 	clientsMutex   sync.RWMutex
 	jwtSecret      []byte
@@ -581,6 +584,17 @@ func main() {
 	}
 	defer nc.Close()
 
+	// Media Proxy
+	mediaURL := os.Getenv("MEDIA_SERVICE_URL")
+	if mediaURL == "" {
+		mediaURL = "http://localhost:8081"
+	}
+	remote, err := url.Parse(mediaURL)
+	if err != nil {
+		log.Fatalf("Failed to parse media URL: %v", err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(remote)
+
 	// JWT secret
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
@@ -593,6 +607,7 @@ func main() {
 		chatClient:     chat.NewChatServiceClient(chatConn),
 		presenceClient: presence.NewPresenceServiceClient(presenceConn),
 		natsConn:       nc,
+		mediaProxy:     proxy,
 		clients:        make(map[string]*Client),
 		jwtSecret:      []byte(secret),
 	}
@@ -604,6 +619,9 @@ func main() {
 	http.HandleFunc("/ws", gateway.handleWebSocket)
 	http.HandleFunc("/login", gateway.handleLogin)
 	http.HandleFunc("/register", gateway.handleRegister)
+	http.HandleFunc("/upload", gateway.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		gateway.mediaProxy.ServeHTTP(w, r)
+	}))
 	http.HandleFunc("/user/", gateway.authMiddleware(gateway.handleGetUser))
 	http.HandleFunc("/chat/history", gateway.authMiddleware(gateway.handleGetChatHistory))
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

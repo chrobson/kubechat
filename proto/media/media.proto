@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package media;
+
+option go_package = "./proto/media";
+
+import "google/protobuf/timestamp.proto";
+
+service MediaService {
+  rpc GetMetadata(GetMetadataRequest) returns (MediaMetadata);
+}
+
+message GetMetadataRequest {
+  string media_id = 1;
+}
+
+message MediaMetadata {
+  string media_id = 1;
+  string original_name = 2;
+  string mime_type = 3;
+  int64 size = 4;
+  string url = 5;
+  google.protobuf.Timestamp uploaded_at = 6;
+}

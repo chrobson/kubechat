@@ -59,6 +59,33 @@ services:
     environment:
       - DATABASE_URL=postgres://user:password@postgres:5432/kubechat?sslmode=disable
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+
+  media-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.media
+    ports:
+      - "50055:50055"
+      - "8081:8081"
+    depends_on:
+      - minio
+    environment:
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - PUBLIC_MEDIA_URL=http://localhost:9000
+
   api-gateway:
     build:
       context: ..
@@ -69,7 +96,9 @@ services:
       - users-service
       - chat-service
       - presence-service
+      - media-service
       - nats
 
 volumes:
   postgres_data:
+  minio_data:
