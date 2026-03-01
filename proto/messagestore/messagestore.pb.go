@@ -155,7 +155,9 @@ type GetMessageHistoryRequest struct {
 	UserId1       string                 `protobuf:"bytes,1,opt,name=user_id1,json=userId1,proto3" json:"user_id1,omitempty"`
 	UserId2       string                 `protobuf:"bytes,2,opt,name=user_id2,json=userId2,proto3" json:"user_id2,omitempty"`
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"` // Deprecated
+	LastMessageId string                 `protobuf:"bytes,5,opt,name=last_message_id,json=lastMessageId,proto3" json:"last_message_id,omitempty"`
+	LastTimestamp *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=last_timestamp,json=lastTimestamp,proto3" json:"last_timestamp,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -216,6 +218,20 @@ func (x *GetMessageHistoryRequest) GetOffset() int32 {
 		return x.Offset
 	}
 	return 0
+}
+
+func (x *GetMessageHistoryRequest) GetLastMessageId() string {
+	if x != nil {
+		return x.LastMessageId
+	}
+	return ""
+}
+
+func (x *GetMessageHistoryRequest) GetLastTimestamp() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastTimestamp
+	}
+	return nil
 }
 
 type GetMessageHistoryResponse struct {
@@ -464,12 +480,14 @@ const file_proto_messagestore_messagestore_proto_rawDesc = "" +
 	"\ttimestamp\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"F\n" +
 	"\x14StoreMessageResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"~\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xe9\x01\n" +
 	"\x18GetMessageHistoryRequest\x12\x19\n" +
 	"\buser_id1\x18\x01 \x01(\tR\auserId1\x12\x19\n" +
 	"\buser_id2\x18\x02 \x01(\tR\auserId2\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x04 \x01(\x05R\x06offset\"T\n" +
+	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12&\n" +
+	"\x0flast_message_id\x18\x05 \x01(\tR\rlastMessageId\x12A\n" +
+	"\x0elast_timestamp\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\rlastTimestamp\"T\n" +
 	"\x19GetMessageHistoryResponse\x127\n" +
 	"\bmessages\x18\x01 \x03(\v2\x1b.messagestore.StoredMessageR\bmessages\"N\n" +
 	"\x14DeleteMessageRequest\x12\x1d\n" +
@@ -518,20 +536,21 @@ var file_proto_messagestore_messagestore_proto_goTypes = []any{
 }
 var file_proto_messagestore_messagestore_proto_depIdxs = []int32{
 	7, // 0: messagestore.StoreMessageRequest.timestamp:type_name -> google.protobuf.Timestamp
-	6, // 1: messagestore.GetMessageHistoryResponse.messages:type_name -> messagestore.StoredMessage
-	7, // 2: messagestore.StoredMessage.timestamp:type_name -> google.protobuf.Timestamp
-	7, // 3: messagestore.StoredMessage.created_at:type_name -> google.protobuf.Timestamp
-	0, // 4: messagestore.MessageStoreService.StoreMessage:input_type -> messagestore.StoreMessageRequest
-	2, // 5: messagestore.MessageStoreService.GetMessageHistory:input_type -> messagestore.GetMessageHistoryRequest
-	4, // 6: messagestore.MessageStoreService.DeleteMessage:input_type -> messagestore.DeleteMessageRequest
-	1, // 7: messagestore.MessageStoreService.StoreMessage:output_type -> messagestore.StoreMessageResponse
-	3, // 8: messagestore.MessageStoreService.GetMessageHistory:output_type -> messagestore.GetMessageHistoryResponse
-	5, // 9: messagestore.MessageStoreService.DeleteMessage:output_type -> messagestore.DeleteMessageResponse
-	7, // [7:10] is the sub-list for method output_type
-	4, // [4:7] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	7, // 1: messagestore.GetMessageHistoryRequest.last_timestamp:type_name -> google.protobuf.Timestamp
+	6, // 2: messagestore.GetMessageHistoryResponse.messages:type_name -> messagestore.StoredMessage
+	7, // 3: messagestore.StoredMessage.timestamp:type_name -> google.protobuf.Timestamp
+	7, // 4: messagestore.StoredMessage.created_at:type_name -> google.protobuf.Timestamp
+	0, // 5: messagestore.MessageStoreService.StoreMessage:input_type -> messagestore.StoreMessageRequest
+	2, // 6: messagestore.MessageStoreService.GetMessageHistory:input_type -> messagestore.GetMessageHistoryRequest
+	4, // 7: messagestore.MessageStoreService.DeleteMessage:input_type -> messagestore.DeleteMessageRequest
+	1, // 8: messagestore.MessageStoreService.StoreMessage:output_type -> messagestore.StoreMessageResponse
+	3, // 9: messagestore.MessageStoreService.GetMessageHistory:output_type -> messagestore.GetMessageHistoryResponse
+	5, // 10: messagestore.MessageStoreService.DeleteMessage:output_type -> messagestore.DeleteMessageResponse
+	8, // [8:11] is the sub-list for method output_type
+	5, // [5:8] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_proto_messagestore_messagestore_proto_init() }

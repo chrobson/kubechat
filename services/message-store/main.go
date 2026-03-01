@@ -81,20 +81,36 @@ func (s *server) GetMessageHistory(ctx context.Context, req *messagestore.GetMes
 		}, nil
 	}
 
-	query := `
-		SELECT message_id, sender_id, recipient_id, content, timestamp, created_at
-		FROM messages
-		WHERE (sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1)
-		ORDER BY timestamp DESC
-		LIMIT $3 OFFSET $4`
-
 	limit := req.Limit
 	if limit == 0 {
 		limit = 50 // Default limit
 	}
 
+	var rows *sql.Rows
+	var err error
 	qStart := time.Now()
-	rows, err := s.db.QueryContext(ctx, query, req.UserId1, req.UserId2, limit, req.Offset)
+
+	if req.LastTimestamp != nil {
+		// Cursor-based pagination: filter by timestamp and message_id to handle same-second messages
+		query := `
+			SELECT message_id, sender_id, recipient_id, content, timestamp, created_at
+			FROM messages
+			WHERE ((sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1))
+			  AND (timestamp < $3 OR (timestamp = $3 AND message_id < $4))
+			ORDER BY timestamp DESC, message_id DESC
+			LIMIT $5`
+		rows, err = s.db.QueryContext(ctx, query, req.UserId1, req.UserId2, req.LastTimestamp.AsTime(), req.LastMessageId, limit)
+	} else {
+		// Standard query (first page or legacy offset)
+		query := `
+			SELECT message_id, sender_id, recipient_id, content, timestamp, created_at
+			FROM messages
+			WHERE (sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1)
+			ORDER BY timestamp DESC, message_id DESC
+			LIMIT $3 OFFSET $4`
+		rows, err = s.db.QueryContext(ctx, query, req.UserId1, req.UserId2, limit, req.Offset)
+	}
+
 	if err != nil {
 		log.Printf("Failed to query message history: %v", err)
 		return &messagestore.GetMessageHistoryResponse{

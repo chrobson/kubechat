@@ -29,7 +29,9 @@ message GetMessageHistoryRequest {
   string user_id1 = 1;
   string user_id2 = 2;
   int32 limit = 3;
-  int32 offset = 4;
+  int32 offset = 4; // Deprecated
+  string last_message_id = 5;
+  google.protobuf.Timestamp last_timestamp = 6;
 }
 
 message GetMessageHistoryResponse {

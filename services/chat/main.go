@@ -110,10 +110,12 @@ func (s *server) GetMessageHistory(ctx context.Context, req *chat.GetMessageHist
 	}
 
 	storeReq := &messagestore.GetMessageHistoryRequest{
-		UserId1: req.UserId1,
-		UserId2: req.UserId2,
-		Limit:   req.Limit,
-		Offset:  req.Offset,
+		UserId1:         req.UserId1,
+		UserId2:         req.UserId2,
+		Limit:           req.Limit,
+		Offset:          req.Offset,
+		LastMessageId:   req.LastMessageId,
+		LastTimestamp:   req.LastTimestamp,
 	}
 
 	resp, err := s.messageStoreConn.GetMessageHistory(ctx, storeReq)
