@@ -3,40 +3,42 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	presence "kubechat/proto/presence"
 )
 
-type UserStatus struct {
-	UserID   string
-	Online   bool
-	LastSeen time.Time
-}
-
 type server struct {
 	presence.UnimplementedPresenceServiceServer
-	userStatuses map[string]*UserStatus
-	mutex        sync.RWMutex
-	natsConn     *nats.Conn
+	redisClient *redis.Client
+	natsConn    *nats.Conn
 }
 
-func (s *server) SetUserOnline(ctx context.Context, req *presence.SetUserOnlineRequest) (*presence.SetUserOnlineResponse, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+const (
+	onlineUsersKey = "presence:online"
+	userStatusKey  = "presence:status:%s"
+)
 
+func (s *server) SetUserOnline(ctx context.Context, req *presence.SetUserOnlineRequest) (*presence.SetUserOnlineResponse, error) {
 	now := time.Now()
-	s.userStatuses[req.UserId] = &UserStatus{
-		UserID:   req.UserId,
-		Online:   true,
-		LastSeen: now,
+
+	// Store in Redis Set and Hash
+	pipe := s.redisClient.Pipeline()
+	pipe.SAdd(ctx, onlineUsersKey, req.UserId)
+	pipe.HSet(ctx, fmt.Sprintf(userStatusKey, req.UserId), "online", true, "last_seen", now.Format(time.RFC3339))
+	_, err := pipe.Exec(ctx)
+
+	if err != nil {
+		log.Printf("Failed to set user online in Redis: %v", err)
+		return nil, err
 	}
 
 	// Publish status update to NATS
@@ -46,12 +48,8 @@ func (s *server) SetUserOnline(ctx context.Context, req *presence.SetUserOnlineR
 		Timestamp: timestamppb.New(now),
 	}
 
-	eventData, err := json.Marshal(event)
-	if err != nil {
-		log.Printf("Failed to marshal status event: %v", err)
-	} else {
-		s.natsConn.Publish("users.status", eventData)
-	}
+	eventData, _ := json.Marshal(event)
+	s.natsConn.Publish("users.status", eventData)
 
 	return &presence.SetUserOnlineResponse{
 		Success: true,
@@ -60,19 +58,17 @@ func (s *server) SetUserOnline(ctx context.Context, req *presence.SetUserOnlineR
 }
 
 func (s *server) SetUserOffline(ctx context.Context, req *presence.SetUserOfflineRequest) (*presence.SetUserOfflineResponse, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
 	now := time.Now()
-	if status, exists := s.userStatuses[req.UserId]; exists {
-		status.Online = false
-		status.LastSeen = now
-	} else {
-		s.userStatuses[req.UserId] = &UserStatus{
-			UserID:   req.UserId,
-			Online:   false,
-			LastSeen: now,
-		}
+
+	// Update Redis
+	pipe := s.redisClient.Pipeline()
+	pipe.SRem(ctx, onlineUsersKey, req.UserId)
+	pipe.HSet(ctx, fmt.Sprintf(userStatusKey, req.UserId), "online", false, "last_seen", now.Format(time.RFC3339))
+	_, err := pipe.Exec(ctx)
+
+	if err != nil {
+		log.Printf("Failed to set user offline in Redis: %v", err)
+		return nil, err
 	}
 
 	// Publish status update to NATS
@@ -82,12 +78,8 @@ func (s *server) SetUserOffline(ctx context.Context, req *presence.SetUserOfflin
 		Timestamp: timestamppb.New(now),
 	}
 
-	eventData, err := json.Marshal(event)
-	if err != nil {
-		log.Printf("Failed to marshal status event: %v", err)
-	} else {
-		s.natsConn.Publish("users.status", eventData)
-	}
+	eventData, _ := json.Marshal(event)
+	s.natsConn.Publish("users.status", eventData)
 
 	return &presence.SetUserOfflineResponse{
 		Success: true,
@@ -96,11 +88,8 @@ func (s *server) SetUserOffline(ctx context.Context, req *presence.SetUserOfflin
 }
 
 func (s *server) GetUserStatus(ctx context.Context, req *presence.GetUserStatusRequest) (*presence.GetUserStatusResponse, error) {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
-	status, exists := s.userStatuses[req.UserId]
-	if !exists {
+	res, err := s.redisClient.HGetAll(ctx, fmt.Sprintf(userStatusKey, req.UserId)).Result()
+	if err != nil || len(res) == 0 {
 		return &presence.GetUserStatusResponse{
 			UserId:   req.UserId,
 			Online:   false,
@@ -108,54 +97,26 @@ func (s *server) GetUserStatus(ctx context.Context, req *presence.GetUserStatusR
 		}, nil
 	}
 
+	online := res["online"] == "1"
+	lastSeen, _ := time.Parse(time.RFC3339, res["last_seen"])
+
 	return &presence.GetUserStatusResponse{
-		UserId:   status.UserID,
-		Online:   status.Online,
-		LastSeen: timestamppb.New(status.LastSeen),
+		UserId:   req.UserId,
+		Online:   online,
+		LastSeen: timestamppb.New(lastSeen),
 	}, nil
 }
 
 func (s *server) GetOnlineUsers(ctx context.Context, req *presence.GetOnlineUsersRequest) (*presence.GetOnlineUsersResponse, error) {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
-	var onlineUsers []string
-	for userID, status := range s.userStatuses {
-		if status.Online {
-			onlineUsers = append(onlineUsers, userID)
-		}
+	onlineUsers, err := s.redisClient.SMembers(ctx, onlineUsersKey).Result()
+	if err != nil {
+		log.Printf("Failed to get online users from Redis: %v", err)
+		return nil, err
 	}
 
 	return &presence.GetOnlineUsersResponse{
 		UserIds: onlineUsers,
 	}, nil
-}
-
-func (s *server) clearAllUserStatuses() {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	
-	log.Println("Clearing all user statuses on service start")
-	// Mark all existing users as offline
-	for userID, status := range s.userStatuses {
-		status.Online = false
-		status.LastSeen = time.Now()
-		
-		// Publish offline status for each user
-		event := &presence.UserStatusEvent{
-			UserId:    userID,
-			Online:    false,
-			Timestamp: timestamppb.New(time.Now()),
-		}
-		
-		eventData, err := json.Marshal(event)
-		if err == nil {
-			s.natsConn.Publish("users.status", eventData)
-		}
-	}
-	
-	// Clear the map entirely to start fresh
-	s.userStatuses = make(map[string]*UserStatus)
 }
 
 func main() {
@@ -170,6 +131,19 @@ func main() {
 	}
 	defer nc.Close()
 
+	// Connect to Redis
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	rdb := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
+	defer rdb.Close()
+
 	lis, err := net.Listen("tcp", ":50052")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
@@ -177,12 +151,9 @@ func main() {
 
 	s := grpc.NewServer()
 	presenceServer := &server{
-		userStatuses: make(map[string]*UserStatus),
-		natsConn:     nc,
+		redisClient: rdb,
+		natsConn:    nc,
 	}
-
-	// Clear any stale user statuses from previous runs
-	presenceServer.clearAllUserStatuses()
 
 	presence.RegisterPresenceServiceServer(s, presenceServer)
 
