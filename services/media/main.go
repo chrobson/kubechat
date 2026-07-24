@@ -58,7 +58,7 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	mediaID := uuid.New().String() + filepath.Ext(handler.Filename)
-	
+
 	_, err = s.minioClient.PutObject(r.Context(), s.bucketName, mediaID, file, handler.Size, minio.PutObjectOptions{
 		ContentType:  handler.Header.Get("Content-Type"),
 		UserMetadata: map[string]string{"Originalname": handler.Filename},
@@ -109,7 +109,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to create bucket: %v", err)
 		}
-		
+
 		// Set bucket policy to public read
 		policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}`, bucketName)
 		err = mc.SetBucketPolicy(ctx, bucketName, policy)

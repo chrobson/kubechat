@@ -258,13 +258,13 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 		if content, ok := msg.Content.(map[string]interface{}); ok {
 			recipientID, _ := content["recipient_id"].(string)
 			isTyping, _ := content["is_typing"].(bool)
-			
+
 			event := chat.TypingEvent{
 				SenderId:    client.UserID,
 				RecipientId: recipientID,
 				IsTyping:    isTyping,
 			}
-			
+
 			data, _ := json.Marshal(event)
 			g.natsConn.Publish("chat.events."+recipientID, data)
 		}
@@ -273,13 +273,13 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 		if content, ok := msg.Content.(map[string]interface{}); ok {
 			recipientID, _ := content["recipient_id"].(string)
 			messageID, _ := content["message_id"].(string)
-			
+
 			receipt := chat.ReadReceipt{
 				SenderId:    client.UserID,
 				RecipientId: recipientID,
 				MessageId:   messageID,
 			}
-			
+
 			data, _ := json.Marshal(receipt)
 			g.natsConn.Publish("chat.events."+recipientID, data)
 		}
@@ -313,7 +313,7 @@ func (g *Gateway) subscribeToUserEvents(userID string, client *Client) *nats.Sub
 			// Determine event type from JSON content
 			var raw map[string]interface{}
 			json.Unmarshal(msg.Data, &raw)
-			
+
 			var response Message
 			if _, ok := raw["is_typing"]; ok {
 				var event chat.TypingEvent
@@ -330,7 +330,7 @@ func (g *Gateway) subscribeToUserEvents(userID string, client *Client) *nats.Sub
 					Content: receipt,
 				}
 			}
-			
+
 			data, _ := json.Marshal(response)
 			select {
 			case client.Send <- data:
