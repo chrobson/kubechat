@@ -259,7 +259,7 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 			recipientID, _ := content["recipient_id"].(string)
 			isTyping, _ := content["is_typing"].(bool)
 
-			event := chat.TypingEvent{
+			event := &chat.TypingEvent{
 				SenderId:    client.UserID,
 				RecipientId: recipientID,
 				IsTyping:    isTyping,
@@ -274,7 +274,7 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 			recipientID, _ := content["recipient_id"].(string)
 			messageID, _ := content["message_id"].(string)
 
-			receipt := chat.ReadReceipt{
+			receipt := &chat.ReadReceipt{
 				SenderId:    client.UserID,
 				RecipientId: recipientID,
 				MessageId:   messageID,
@@ -316,15 +316,15 @@ func (g *Gateway) subscribeToUserEvents(userID string, client *Client) *nats.Sub
 
 			var response Message
 			if _, ok := raw["is_typing"]; ok {
-				var event chat.TypingEvent
-				json.Unmarshal(msg.Data, &event)
+				event := &chat.TypingEvent{}
+				json.Unmarshal(msg.Data, event)
 				response = Message{
 					Type:    "typing_event",
 					Content: event,
 				}
 			} else if _, ok := raw["message_id"]; ok {
-				var receipt chat.ReadReceipt
-				json.Unmarshal(msg.Data, &receipt)
+				receipt := &chat.ReadReceipt{}
+				json.Unmarshal(msg.Data, receipt)
 				response = Message{
 					Type:    "read_receipt",
 					Content: receipt,
@@ -357,8 +357,8 @@ func (g *Gateway) subscribeToUserMessages(userID string, client *Client) *nats.S
 
 		// Only process if this is still the current client for this user
 		if exists && currentClient == client {
-			var chatMessage chat.Message
-			err := json.Unmarshal(msg.Data, &chatMessage)
+			chatMessage := &chat.Message{}
+			err := json.Unmarshal(msg.Data, chatMessage)
 			if err != nil {
 				log.Printf("Failed to unmarshal chat message: %v", err)
 				return
@@ -391,8 +391,8 @@ func (g *Gateway) subscribeToUserMessages(userID string, client *Client) *nats.S
 
 func (g *Gateway) subscribeToUserStatus() {
 	g.natsConn.Subscribe("users.status", func(msg *nats.Msg) {
-		var statusEvent presence.UserStatusEvent
-		err := json.Unmarshal(msg.Data, &statusEvent)
+		statusEvent := &presence.UserStatusEvent{}
+		err := json.Unmarshal(msg.Data, statusEvent)
 		if err != nil {
 			log.Printf("Failed to unmarshal status event: %v", err)
 			return
