@@ -114,6 +114,7 @@ func (s *server) LoginUser(ctx context.Context, req *users.LoginUserRequest) (*u
 	}
 
 	if user == nil {
+		loginFailure.Inc()
 		return &users.LoginUserResponse{
 			Success: false,
 			Message: "User not found",
@@ -123,6 +124,7 @@ func (s *server) LoginUser(ctx context.Context, req *users.LoginUserRequest) (*u
 	// Check password
 	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password))
 	if err != nil {
+		loginFailure.Inc()
 		return &users.LoginUserResponse{
 			Success: false,
 			Message: "Invalid password",
