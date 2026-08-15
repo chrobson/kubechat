@@ -73,6 +73,36 @@ func TestCreateUserDuplicateUsername(t *testing.T) {
 	}
 }
 
+func TestCreateUserValidation(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		password string
+	}{
+		{"empty username", "", "secret"},
+		{"blank username", "   ", "secret"},
+		{"empty password", "alice", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestServer()
+			resp, err := s.CreateUser(context.Background(), &users.CreateUserRequest{
+				Username: tc.username,
+				Password: tc.password,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.Success {
+				t.Fatal("expected request to be rejected")
+			}
+			if len(s.users) != 0 {
+				t.Error("invalid user was stored")
+			}
+		})
+	}
+}
+
 func TestCreateUserConcurrent(t *testing.T) {
 	s := newTestServer()
 	const n = 8

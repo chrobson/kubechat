@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +55,13 @@ func (s *server) CreateUser(ctx context.Context, req *users.CreateUserRequest) (
 	var cancel context.CancelFunc
 	ctx, cancel = context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
+
+	if strings.TrimSpace(req.Username) == "" || req.Password == "" {
+		return &users.CreateUserResponse{
+			Success: false,
+			Message: "Username and password are required",
+		}, nil
+	}
 
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
