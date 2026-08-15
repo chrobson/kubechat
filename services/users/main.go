@@ -217,10 +217,9 @@ func main() {
 	// JWT secret
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		log.Println("WARNING: JWT_SECRET not set; generating ephemeral secret (not for production)")
-		buf := make([]byte, 32)
-		_, _ = rand.Read(buf)
-		secret = hex.EncodeToString(buf)
+		// Must match the api-gateway fallback, otherwise issued tokens never verify.
+		log.Println("WARNING: JWT_SECRET not set; using default for demo")
+		secret = "default_secret_change_me"
 	}
 
 	lis, err := net.Listen("tcp", ":50051")
