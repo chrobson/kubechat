@@ -32,6 +32,8 @@ services:
       - "50051:50051"
     depends_on:
       - nats
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-default_secret_change_me}
 
   presence-service:
     build:
@@ -55,6 +57,9 @@ services:
     depends_on:
       - nats
       - message-store-service
+    environment:
+      - NATS_URL=nats://nats:4222
+      - MESSAGE_STORE_URL=message-store-service:50054
 
   message-store-service:
     build:
@@ -67,6 +72,7 @@ services:
       - postgres
     environment:
       - DATABASE_URL=postgres://user:password@postgres:5432/kubechat?sslmode=disable
+      - NATS_URL=nats://nats:4222
 
   minio:
     image: minio/minio:latest
@@ -107,6 +113,13 @@ services:
       - presence-service
       - media-service
       - nats
+    environment:
+      - NATS_URL=nats://nats:4222
+      - USERS_SERVICE_URL=users-service:50051
+      - CHAT_SERVICE_URL=chat-service:50053
+      - PRESENCE_SERVICE_URL=presence-service:50052
+      - MEDIA_SERVICE_URL=http://media-service:8081
+      - JWT_SECRET=${JWT_SECRET:-default_secret_change_me}
 
 volumes:
   postgres_data:

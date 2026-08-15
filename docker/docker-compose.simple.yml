@@ -6,6 +6,11 @@ services:
       - "6222:6222" 
       - "8222:8222"
 
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+
   postgres:
     image: postgres:13
     environment:
@@ -28,6 +33,7 @@ services:
         condition: service_started
     environment:
       - NATS_URL=nats://nats:4222
+      - JWT_SECRET=${JWT_SECRET:-default_secret_change_me}
     restart: unless-stopped
 
   presence-service:
@@ -41,6 +47,7 @@ services:
         condition: service_started
     environment:
       - NATS_URL=nats://nats:4222
+      - REDIS_ADDR=redis:6379
     restart: unless-stopped
 
   message-store-service:
@@ -95,6 +102,7 @@ services:
       - USERS_SERVICE_URL=users-service:50051
       - CHAT_SERVICE_URL=chat-service:50053
       - PRESENCE_SERVICE_URL=presence-service:50052
+      - JWT_SECRET=${JWT_SECRET:-default_secret_change_me}
     restart: unless-stopped
 
 volumes:
