@@ -52,9 +52,9 @@ if curl -s http://localhost:8080 >/dev/null 2>&1; then
     echo "   - NATS Dashboard: http://localhost:8222"
     echo ""
     echo "🛑 To stop the demo:"
-    echo "   docker-compose -f docker-compose.demo.yml down"
+    echo "   docker-compose -f docker/docker-compose.simple.yml down"
     echo ""
 else
     echo "❌ Failed to start the demo. Check the logs:"
-    echo "   docker-compose -f docker-compose.demo.yml logs"
+    echo "   docker-compose -f docker/docker-compose.simple.yml logs"
 fi
