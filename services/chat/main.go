@@ -22,9 +22,14 @@ import (
 	messagestore "kubechat/proto/messagestore"
 )
 
+// publisher is the subset of *nats.Conn used by the chat service.
+type publisher interface {
+	Publish(subject string, data []byte) error
+}
+
 type server struct {
 	chat.UnimplementedChatServiceServer
-	natsConn         *nats.Conn
+	natsConn         publisher
 	messageStoreConn messagestore.MessageStoreServiceClient
 }
 
