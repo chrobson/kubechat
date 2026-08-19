@@ -162,6 +162,24 @@ func TestStoreMessage(t *testing.T) {
 	}
 }
 
+// The chat service stores each message over gRPC and also publishes it to
+// chat.messages.<recipient> and chat.messages.<sender>, both of which this
+// service consumes. Inserts must therefore be idempotent on message_id.
+func TestStoreMessageIsIdempotent(t *testing.T) {
+	s, mock := newMockServer(t)
+	insert := regexp.QuoteMeta("ON CONFLICT (message_id) DO NOTHING")
+	mock.ExpectExec(insert).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(insert).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	req := &messagestore.StoreMessageRequest{MessageId: "m1", Timestamp: timestamppb.Now()}
+	for i := 0; i < 2; i++ {
+		resp, err := s.StoreMessage(context.Background(), req)
+		if err != nil || !resp.Success {
+			t.Fatalf("attempt %d: StoreMessage = %+v, %v", i+1, resp, err)
+		}
+	}
+}
+
 func TestStoreMessageDBError(t *testing.T) {
 	s, mock := newMockServer(t)
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO messages")).WillReturnError(errors.New("connection reset"))

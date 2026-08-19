@@ -48,7 +48,8 @@ func (s *server) StoreMessage(ctx context.Context, req *messagestore.StoreMessag
 
 	query := `
 		INSERT INTO messages (message_id, sender_id, recipient_id, content, timestamp, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (message_id) DO NOTHING`
 
 	_, err := s.db.ExecContext(ctx, query,
 		req.MessageId,
