@@ -145,6 +145,31 @@ func TestGetMessageHistoryCursor(t *testing.T) {
 	}
 }
 
+func TestGetMessageHistoryErrors(t *testing.T) {
+	t.Run("query error", func(t *testing.T) {
+		s, mock := newMockServer(t)
+		mock.ExpectQuery(regexp.QuoteMeta("FROM messages")).WillReturnError(errors.New("db down"))
+
+		if _, err := s.GetMessageHistory(context.Background(), &messagestore.GetMessageHistoryRequest{}); err == nil {
+			t.Fatal("expected query error to be returned, not an empty page")
+		}
+	})
+
+	t.Run("row iteration error", func(t *testing.T) {
+		s, mock := newMockServer(t)
+		ts := time.Now()
+		mock.ExpectQuery(regexp.QuoteMeta("FROM messages")).
+			WillReturnRows(sqlmock.NewRows(historyColumns).
+				AddRow("m1", "a", "b", "hi", ts, ts).
+				AddRow("m2", "a", "b", "yo", ts, ts).
+				RowError(1, errors.New("connection lost")))
+
+		if _, err := s.GetMessageHistory(context.Background(), &messagestore.GetMessageHistoryRequest{}); err == nil {
+			t.Fatal("expected error for truncated result set")
+		}
+	})
+}
+
 func TestStoreMessage(t *testing.T) {
 	s, mock := newMockServer(t)
 	ts := time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC)

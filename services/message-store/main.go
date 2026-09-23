@@ -88,9 +88,7 @@ func (s *server) GetMessageHistory(ctx context.Context, req *messagestore.GetMes
 
 	if err != nil {
 		log.Printf("Failed to query message history: %v", err)
-		return &messagestore.GetMessageHistoryResponse{
-			Messages: []*messagestore.StoredMessage{},
-		}, nil
+		return nil, err
 	}
 	defer rows.Close()
 	dbQueryLatency.Observe(time.Since(qStart).Seconds())
@@ -116,6 +114,10 @@ func (s *server) GetMessageHistory(ctx context.Context, req *messagestore.GetMes
 		msg.Timestamp = timestamppb.New(timestamp)
 		msg.CreatedAt = timestamppb.New(createdAt)
 		messages = append(messages, &msg)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("Failed to read message history: %v", err)
+		return nil, err
 	}
 
 	return &messagestore.GetMessageHistoryResponse{
