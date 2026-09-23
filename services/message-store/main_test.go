@@ -55,6 +55,18 @@ func TestHistoryQuery(t *testing.T) {
 			wantOffsetQ: true,
 		},
 		{
+			name:        "negative limit and offset are normalised",
+			req:         &messagestore.GetMessageHistoryRequest{UserId1: "a", UserId2: "b", Limit: -5, Offset: -1},
+			wantArgs:    []interface{}{"a", "b", int32(defaultHistoryLimit), int32(0)},
+			wantOffsetQ: true,
+		},
+		{
+			name:        "limit is capped",
+			req:         &messagestore.GetMessageHistoryRequest{UserId1: "a", UserId2: "b", Limit: 100000},
+			wantArgs:    []interface{}{"a", "b", int32(maxHistoryLimit), int32(0)},
+			wantOffsetQ: true,
+		},
+		{
 			name: "cursor switches to keyset pagination and ignores offset",
 			req: &messagestore.GetMessageHistoryRequest{
 				UserId1: "a", UserId2: "b", Limit: 10, Offset: 30,

@@ -125,15 +125,25 @@ func (s *server) GetMessageHistory(ctx context.Context, req *messagestore.GetMes
 	}, nil
 }
 
-const defaultHistoryLimit = 50
+const (
+	defaultHistoryLimit = 50
+	maxHistoryLimit     = 200
+)
 
 // historyQuery builds the SQL query and arguments for a page of conversation
 // history between two users. When a cursor (LastTimestamp + LastMessageId) is
 // given, keyset pagination is used; otherwise it falls back to LIMIT/OFFSET.
 func historyQuery(req *messagestore.GetMessageHistoryRequest) (string, []interface{}) {
 	limit := req.Limit
-	if limit == 0 {
+	switch {
+	case limit <= 0:
 		limit = defaultHistoryLimit
+	case limit > maxHistoryLimit:
+		limit = maxHistoryLimit
+	}
+	offset := req.Offset
+	if offset < 0 {
+		offset = 0
 	}
 
 	if req.LastTimestamp != nil {
@@ -155,7 +165,7 @@ func historyQuery(req *messagestore.GetMessageHistoryRequest) (string, []interfa
 		WHERE (sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1)
 		ORDER BY timestamp DESC, message_id DESC
 		LIMIT $3 OFFSET $4`
-	return query, []interface{}{req.UserId1, req.UserId2, limit, req.Offset}
+	return query, []interface{}{req.UserId1, req.UserId2, limit, offset}
 }
 
 func (s *server) DeleteMessage(ctx context.Context, req *messagestore.DeleteMessageRequest) (*messagestore.DeleteMessageResponse, error) {
