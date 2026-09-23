@@ -157,6 +157,13 @@ func historyQuery(req *messagestore.GetMessageHistoryRequest) (string, []interfa
 }
 
 func (s *server) DeleteMessage(ctx context.Context, req *messagestore.DeleteMessageRequest) (*messagestore.DeleteMessageResponse, error) {
+	if s.db == nil {
+		return &messagestore.DeleteMessageResponse{
+			Success: false,
+			Error:   "Database not available",
+		}, nil
+	}
+
 	query := `DELETE FROM messages WHERE message_id = $1 AND sender_id = $2`
 
 	result, err := s.db.ExecContext(ctx, query, req.MessageId, req.UserId)

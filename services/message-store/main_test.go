@@ -244,4 +244,9 @@ func TestWithoutDatabase(t *testing.T) {
 	if err != nil || len(hist.Messages) != 0 {
 		t.Errorf("GetMessageHistory without db = %+v, %v", hist, err)
 	}
+
+	del, err := s.DeleteMessage(context.Background(), &messagestore.DeleteMessageRequest{MessageId: "m1", UserId: "a"})
+	if err != nil || del.Success {
+		t.Errorf("DeleteMessage without db = %+v, %v", del, err)
+	}
 }
