@@ -16,10 +16,15 @@ import (
 	presence "kubechat/proto/presence"
 )
 
+// publisher is the subset of *nats.Conn used by the presence service.
+type publisher interface {
+	Publish(subject string, data []byte) error
+}
+
 type server struct {
 	presence.UnimplementedPresenceServiceServer
 	redisClient *redis.Client
-	natsConn    *nats.Conn
+	natsConn    publisher
 }
 
 const (
