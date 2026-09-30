@@ -318,6 +318,31 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 	}
 }
 
+// decodeUserEvent turns a payload published on chat.events.<user> into a
+// client message. Read receipts always carry a message_id; anything else is a
+// typing event. Note that is_typing cannot be used as a discriminator because
+// it is omitted from the JSON when false.
+func decodeUserEvent(data []byte) (Message, bool) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return Message{}, false
+	}
+
+	if _, ok := raw["message_id"]; ok {
+		receipt := &chat.ReadReceipt{}
+		if err := json.Unmarshal(data, receipt); err != nil {
+			return Message{}, false
+		}
+		return Message{Type: "read_receipt", Content: receipt}, true
+	}
+
+	event := &chat.TypingEvent{}
+	if err := json.Unmarshal(data, event); err != nil {
+		return Message{}, false
+	}
+	return Message{Type: "typing_event", Content: event}, true
+}
+
 func (g *Gateway) subscribeToUserEvents(userID string, client *Client) *nats.Subscription {
 	subject := "chat.events." + userID
 	sub, err := g.natsConn.Subscribe(subject, func(msg *nats.Msg) {
@@ -326,25 +351,10 @@ func (g *Gateway) subscribeToUserEvents(userID string, client *Client) *nats.Sub
 		g.clientsMutex.RUnlock()
 
 		if exists && currentClient == client {
-			// Determine event type from JSON content
-			var raw map[string]interface{}
-			json.Unmarshal(msg.Data, &raw)
-
-			var response Message
-			if _, ok := raw["is_typing"]; ok {
-				event := &chat.TypingEvent{}
-				json.Unmarshal(msg.Data, event)
-				response = Message{
-					Type:    "typing_event",
-					Content: event,
-				}
-			} else if _, ok := raw["message_id"]; ok {
-				receipt := &chat.ReadReceipt{}
-				json.Unmarshal(msg.Data, receipt)
-				response = Message{
-					Type:    "read_receipt",
-					Content: receipt,
-				}
+			response, ok := decodeUserEvent(msg.Data)
+			if !ok {
+				log.Printf("Dropping unrecognised event for user %s", userID)
+				return
 			}
 
 			data, _ := json.Marshal(response)

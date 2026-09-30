@@ -696,6 +696,53 @@ func TestUserEventsDelivered(t *testing.T) {
 	}
 }
 
+func TestDecodeUserEvent(t *testing.T) {
+	marshal := func(v interface{}) []byte {
+		b, _ := json.Marshal(v)
+		return b
+	}
+
+	tests := []struct {
+		name     string
+		data     []byte
+		wantType string
+		wantOK   bool
+	}{
+		{"typing started", marshal(&chat.TypingEvent{SenderId: "a", IsTyping: true}), "typing_event", true},
+		// is_typing=false is dropped by omitempty, so the payload has no is_typing key.
+		{"typing stopped", marshal(&chat.TypingEvent{SenderId: "a", IsTyping: false}), "typing_event", true},
+		{"read receipt", marshal(&chat.ReadReceipt{SenderId: "a", MessageId: "m1"}), "read_receipt", true},
+		{"invalid json", []byte("{"), "", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m, ok := decodeUserEvent(tc.data)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if m.Type != tc.wantType {
+				t.Errorf("type = %q, want %q", m.Type, tc.wantType)
+			}
+		})
+	}
+}
+
+func TestTypingStoppedReachesClient(t *testing.T) {
+	g := newTestGateway()
+	alice, bob := newTestClient("alice"), newTestClient("bob")
+	registerClient(g, bob)
+
+	g.handleMessage(alice, &Message{Type: "typing_event", Content: map[string]interface{}{"recipient_id": "bob", "is_typing": false}})
+	for _, m := range g.bus.messages() {
+		g.bus.deliver(m.Subject, m.Data)
+	}
+
+	if m := recvMessage(t, bob); m.Type != "typing_event" {
+		t.Fatalf("type = %q, want typing_event", m.Type)
+	}
+}
+
 func TestUserStatusBroadcast(t *testing.T) {
 	g := newTestGateway()
 	g.subscribeToUserStatus()
