@@ -26,11 +26,17 @@ import (
 	users "kubechat/proto/users"
 )
 
+// messageBus is the subset of *nats.Conn used by the gateway.
+type messageBus interface {
+	Publish(subject string, data []byte) error
+	Subscribe(subject string, cb nats.MsgHandler) (*nats.Subscription, error)
+}
+
 type Gateway struct {
 	usersClient    users.UsersServiceClient
 	chatClient     chat.ChatServiceClient
 	presenceClient presence.PresenceServiceClient
-	natsConn       *nats.Conn
+	natsConn       messageBus
 	mediaProxy     *httputil.ReverseProxy
 	clients        map[string]*Client
 	clientsMutex   sync.RWMutex
