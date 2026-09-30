@@ -249,6 +249,19 @@ func (g *Gateway) writePump(client *Client) {
 	}
 }
 
+// trySend queues data for the client without blocking. It reports false when
+// the client's buffer is full (slow or dead connection). The Send channel is
+// never closed by producers: several NATS callbacks write to it concurrently,
+// so closing it here would panic the next writer.
+func trySend(client *Client, data []byte) bool {
+	select {
+	case client.Send <- data:
+		return true
+	default:
+		return false
+	}
+}
+
 func (g *Gateway) handleMessage(client *Client, msg *Message) {
 	switch msg.Type {
 	case "send_message":
@@ -358,11 +371,7 @@ func (g *Gateway) subscribeToUserEvents(userID string, client *Client) *nats.Sub
 			}
 
 			data, _ := json.Marshal(response)
-			select {
-			case client.Send <- data:
-			default:
-				// Channel probably closed
-			}
+			trySend(client, data)
 		}
 	})
 
@@ -396,13 +405,8 @@ func (g *Gateway) subscribeToUserMessages(userID string, client *Client) *nats.S
 			}
 
 			data, _ := json.Marshal(response)
-			select {
-			case client.Send <- data:
-			default:
-				close(client.Send)
-				g.clientsMutex.Lock()
-				delete(g.clients, userID)
-				g.clientsMutex.Unlock()
+			if !trySend(client, data) {
+				log.Printf("Send buffer full for user %s, dropping message", userID)
 			}
 		}
 	})
@@ -434,11 +438,8 @@ func (g *Gateway) subscribeToUserStatus() {
 		// Broadcast to all connected clients
 		g.clientsMutex.RLock()
 		for _, client := range g.clients {
-			select {
-			case client.Send <- data:
-			default:
-				close(client.Send)
-				// Avoid map write under read lock; removal is handled on client tear-down
+			if !trySend(client, data) {
+				log.Printf("Send buffer full for user %s, dropping status update", client.UserID)
 			}
 		}
 		g.clientsMutex.RUnlock()

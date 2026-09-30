@@ -761,6 +761,32 @@ func TestUserStatusBroadcast(t *testing.T) {
 	}
 }
 
+func TestSlowClientDoesNotPanic(t *testing.T) {
+	g := newTestGateway()
+	g.subscribeToUserStatus()
+	slow := &Client{UserID: "bob", Send: make(chan []byte, 1), Limiter: rate.NewLimiter(rate.Inf, 1)}
+	registerClient(g, slow)
+
+	status, _ := json.Marshal(&presence.UserStatusEvent{UserId: "carol", Online: true})
+	msg, _ := json.Marshal(&chat.Message{MessageId: "m1"})
+
+	// The buffer holds one message; everything after that must be dropped
+	// rather than closing the channel (which would panic on the next send).
+	for i := 0; i < 3; i++ {
+		g.bus.deliver("users.status", status)
+		g.bus.deliver("chat.messages.bob", msg)
+	}
+
+	if got := len(slow.Send); got != 1 {
+		t.Errorf("buffered = %d, want 1", got)
+	}
+	g.clientsMutex.RLock()
+	defer g.clientsMutex.RUnlock()
+	if g.clients["bob"] != slow {
+		t.Error("slow client should stay registered until its connection closes")
+	}
+}
+
 // --- WebSocket end-to-end ------------------------------------------------
 
 func TestWebSocketRejectsInvalidToken(t *testing.T) {
