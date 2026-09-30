@@ -75,6 +75,16 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+type contextKey string
+
+const userIDKey contextKey = "user_id"
+
+// userIDFromContext returns the authenticated user ID set by authMiddleware.
+func userIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(userIDKey).(string)
+	return id
+}
+
 func (g *Gateway) verifyToken(tokenString string) (string, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -120,7 +130,7 @@ func (g *Gateway) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// Add userID to context
-		ctx := context.WithValue(r.Context(), "user_id", userID)
+		ctx := context.WithValue(r.Context(), userIDKey, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
@@ -513,7 +523,7 @@ func (g *Gateway) handleGetChatHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify that the authenticated user is one of the participants
-	authUserID, _ := r.Context().Value("user_id").(string)
+	authUserID := userIDFromContext(r.Context())
 	if userID1 != authUserID && userID2 != authUserID {
 		http.Error(w, "Forbidden: You can only access your own chat history", http.StatusForbidden)
 		return
