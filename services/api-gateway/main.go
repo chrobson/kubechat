@@ -60,6 +60,7 @@ type Client struct {
 	Send          chan []byte
 	Subscriptions []*nats.Subscription
 	Limiter       *rate.Limiter
+	done          chan struct{} // closed when the read loop exits
 }
 
 type Message struct {
@@ -160,6 +161,7 @@ func (g *Gateway) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Conn:    conn,
 		Send:    make(chan []byte, 256),
 		Limiter: rate.NewLimiter(rate.Every(200*time.Millisecond), 5), // 5 msg/s burst
+		done:    make(chan struct{}),
 	}
 	wsConnections.Inc()
 
@@ -214,6 +216,7 @@ func (g *Gateway) readPump(client *Client) {
 			})
 		}
 
+		close(client.done)
 		client.Conn.Close()
 		wsConnections.Dec()
 	}()
@@ -241,6 +244,8 @@ func (g *Gateway) writePump(client *Client) {
 
 	for {
 		select {
+		case <-client.done:
+			return
 		case message, ok := <-client.Send:
 			if !ok {
 				client.Conn.WriteMessage(websocket.CloseMessage, []byte{})

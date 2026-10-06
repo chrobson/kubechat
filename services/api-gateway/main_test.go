@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -901,4 +902,22 @@ func TestWebSocketReconnectKeepsNewConnection(t *testing.T) {
 	if m := readWS(t, second); m.Type != "new_message" {
 		t.Fatalf("type = %q, want new_message", m.Type)
 	}
+}
+
+func TestWebSocketDisconnectStopsGoroutines(t *testing.T) {
+	g := newTestGateway()
+	srv := httptest.NewServer(http.HandlerFunc(g.handleWebSocket))
+	defer srv.Close()
+	srv.Client() // start any lazily created server goroutines up front
+
+	base := runtime.NumGoroutine()
+	for i := 0; i < 5; i++ {
+		conn := dialWS(t, srv, "bob")
+		waitFor(t, "registration", func() bool { return g.currentClient("bob") != nil })
+		conn.Close()
+		waitFor(t, "unregistration", func() bool { return g.currentClient("bob") == nil })
+	}
+
+	// Both pumps must exit once the client disconnects.
+	waitFor(t, "pump goroutines to exit", func() bool { return runtime.NumGoroutine() <= base })
 }
