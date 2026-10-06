@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/websocket"
 	"github.com/nats-io/nats.go"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
@@ -803,5 +804,101 @@ func TestWebSocketRejectsInvalidToken(t *testing.T) {
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("query %q: status = %d, want 401", q, resp.StatusCode)
 		}
+	}
+}
+
+func dialWS(t *testing.T, srv *httptest.Server, userID string) *websocket.Conn {
+	t.Helper()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws?token=" + validToken(t, userID)
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
+func (g *testGateway) currentClient(userID string) *Client {
+	g.clientsMutex.RLock()
+	defer g.clientsMutex.RUnlock()
+	return g.clients[userID]
+}
+
+func readWS(t *testing.T, conn *websocket.Conn) Message {
+	t.Helper()
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var m Message
+	if err := conn.ReadJSON(&m); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return m
+}
+
+func TestWebSocketDeliversMessages(t *testing.T) {
+	g := newTestGateway()
+	srv := httptest.NewServer(http.HandlerFunc(g.handleWebSocket))
+	defer srv.Close()
+
+	conn := dialWS(t, srv, "bob")
+	waitFor(t, "bob to register", func() bool { return g.currentClient("bob") != nil })
+
+	data, _ := json.Marshal(&chat.Message{MessageId: "m1", SenderId: "alice", Content: "hi"})
+	g.bus.deliver("chat.messages.bob", data)
+
+	if m := readWS(t, conn); m.Type != "new_message" {
+		t.Fatalf("type = %q, want new_message", m.Type)
+	}
+
+	// Client -> server: send_message is routed to the chat service.
+	if err := conn.WriteJSON(Message{Type: "send_message", Content: map[string]string{"recipient_id": "alice", "message": "yo"}}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "SendMessage", func() bool {
+		g.chat.mu.Lock()
+		defer g.chat.mu.Unlock()
+		return len(g.chat.sent) == 1
+	})
+
+	// Disconnect marks the user offline and unregisters it.
+	conn.Close()
+	waitFor(t, "bob to unregister", func() bool { return g.currentClient("bob") == nil })
+	waitFor(t, "SetUserOffline", func() bool { return len(g.presence.offlineCalls()) == 1 })
+}
+
+func TestWebSocketReconnectKeepsNewConnection(t *testing.T) {
+	g := newTestGateway()
+	srv := httptest.NewServer(http.HandlerFunc(g.handleWebSocket))
+	defer srv.Close()
+
+	first := dialWS(t, srv, "bob")
+	waitFor(t, "first connection", func() bool { return g.currentClient("bob") != nil })
+	firstClient := g.currentClient("bob")
+
+	second := dialWS(t, srv, "bob")
+	waitFor(t, "second connection", func() bool {
+		c := g.currentClient("bob")
+		return c != nil && c != firstClient
+	})
+
+	// The gateway closes the old socket; wait for its read loop to finish.
+	first.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for {
+		if _, _, err := first.ReadMessage(); err != nil {
+			break
+		}
+	}
+	time.Sleep(50 * time.Millisecond) // let the old read loop run its cleanup
+
+	if g.currentClient("bob") == nil {
+		t.Fatal("old connection teardown unregistered the new connection")
+	}
+	if calls := g.presence.offlineCalls(); len(calls) != 0 {
+		t.Fatalf("user marked offline while still connected: %v", calls)
+	}
+
+	data, _ := json.Marshal(&chat.Message{MessageId: "m1", Content: "hi"})
+	g.bus.deliver("chat.messages.bob", data)
+	if m := readWS(t, second); m.Type != "new_message" {
+		t.Fatalf("type = %q, want new_message", m.Type)
 	}
 }

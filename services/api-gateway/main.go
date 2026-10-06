@@ -192,8 +192,13 @@ func (g *Gateway) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) readPump(client *Client) {
 	defer func() {
+		// A newer connection for the same user may already have replaced this
+		// one; in that case leave its registration and presence untouched.
 		g.clientsMutex.Lock()
-		delete(g.clients, client.UserID)
+		current := g.clients[client.UserID] == client
+		if current {
+			delete(g.clients, client.UserID)
+		}
 		g.clientsMutex.Unlock()
 
 		// Unsubscribe from NATS messages
@@ -203,10 +208,11 @@ func (g *Gateway) readPump(client *Client) {
 			}
 		}
 
-		// Set user offline
-		g.presenceClient.SetUserOffline(context.Background(), &presence.SetUserOfflineRequest{
-			UserId: client.UserID,
-		})
+		if current {
+			g.presenceClient.SetUserOffline(context.Background(), &presence.SetUserOfflineRequest{
+				UserId: client.UserID,
+			})
+		}
 
 		client.Conn.Close()
 		wsConnections.Dec()
