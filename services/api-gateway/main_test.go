@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"runtime"
 	"strings"
 	"sync"
@@ -398,6 +399,71 @@ func TestHandleGetChatHistory(t *testing.T) {
 				t.Errorf("body = %+v", body)
 			}
 		})
+	}
+}
+
+func TestHistoryRequest(t *testing.T) {
+	cursor := time.Date(2024, 5, 1, 12, 0, 0, 123000000, time.UTC)
+
+	tests := []struct {
+		name      string
+		query     string
+		wantLimit int32
+		wantID    string
+		wantTS    *time.Time
+		wantErr   bool
+	}{
+		{name: "defaults", query: "", wantLimit: 50},
+		{name: "custom limit", query: "limit=10", wantLimit: 10},
+		{name: "limit capped", query: "limit=5000", wantLimit: 200},
+		{name: "zero limit", query: "limit=0", wantErr: true},
+		{name: "non-numeric limit", query: "limit=abc", wantErr: true},
+		{name: "cursor", query: "before=2024-05-01T12:00:00.123Z&before_id=m9", wantLimit: 50, wantID: "m9", wantTS: &cursor},
+		{name: "cursor without id", query: "before=2024-05-01T12:00:00Z", wantErr: true},
+		{name: "id without cursor", query: "before_id=m9", wantErr: true},
+		{name: "bad timestamp", query: "before=yesterday&before_id=m9", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			q, _ := url.ParseQuery(tc.query)
+			req, err := historyRequest(q)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if tc.wantErr {
+				return
+			}
+			if req.Limit != tc.wantLimit {
+				t.Errorf("limit = %d, want %d", req.Limit, tc.wantLimit)
+			}
+			if req.LastMessageId != tc.wantID {
+				t.Errorf("last id = %q, want %q", req.LastMessageId, tc.wantID)
+			}
+			if tc.wantTS == nil {
+				if req.LastTimestamp != nil {
+					t.Errorf("unexpected cursor %v", req.LastTimestamp.AsTime())
+				}
+			} else if !req.LastTimestamp.AsTime().Equal(*tc.wantTS) {
+				t.Errorf("cursor = %v, want %v", req.LastTimestamp.AsTime(), *tc.wantTS)
+			}
+		})
+	}
+}
+
+func TestHandleGetChatHistoryForwardsCursor(t *testing.T) {
+	g := newTestGateway()
+	req := httptest.NewRequest(http.MethodGet, "/chat/history?user1=alice&user2=bob&limit=20&before=2024-05-01T12:00:00Z&before_id=m9", nil)
+	req.Header.Set("Authorization", "Bearer "+validToken(t, "alice"))
+	rec := httptest.NewRecorder()
+	g.authMiddleware(g.handleGetChatHistory)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	got := g.chat.historyReq
+	if got.UserId1 != "alice" || got.UserId2 != "bob" || got.Limit != 20 || got.LastMessageId != "m9" || got.LastTimestamp == nil {
+		t.Errorf("forwarded request = %+v", got)
 	}
 }
 

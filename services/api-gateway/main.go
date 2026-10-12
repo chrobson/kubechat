@@ -9,6 +9,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	chat "kubechat/proto/chat"
 	presence "kubechat/proto/presence"
@@ -530,6 +532,43 @@ func (g *Gateway) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+const defaultHistoryLimit = 50
+
+// historyRequest parses pagination parameters for /chat/history:
+//
+//	limit      page size (default 50)
+//	before     RFC 3339 timestamp of the oldest message already loaded
+//	before_id  message_id of that message (required with before)
+//
+// Pages are returned newest first; pass the last message of a page as the
+// cursor to fetch the next (older) one.
+func historyRequest(q url.Values) (*chat.GetMessageHistoryRequest, error) {
+	req := &chat.GetMessageHistoryRequest{Limit: defaultHistoryLimit}
+
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("invalid limit")
+		}
+		req.Limit = int32(min(n, 200))
+	}
+
+	before, beforeID := q.Get("before"), q.Get("before_id")
+	if (before == "") != (beforeID == "") {
+		return nil, fmt.Errorf("before and before_id must be used together")
+	}
+	if before != "" {
+		ts, err := time.Parse(time.RFC3339Nano, before)
+		if err != nil {
+			return nil, fmt.Errorf("invalid before timestamp, expected RFC 3339")
+		}
+		req.LastTimestamp = timestamppb.New(ts)
+		req.LastMessageId = beforeID
+	}
+
+	return req, nil
+}
+
 func (g *Gateway) handleGetChatHistory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -552,13 +591,16 @@ func (g *Gateway) handleGetChatHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	histReq, err := historyRequest(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	histReq.UserId1 = userID1
+	histReq.UserId2 = userID2
+
 	// Get chat history from chat service
-	resp, err := g.chatClient.GetMessageHistory(context.Background(), &chat.GetMessageHistoryRequest{
-		UserId1: userID1,
-		UserId2: userID2,
-		Limit:   50, // Default limit
-		Offset:  0,
-	})
+	resp, err := g.chatClient.GetMessageHistory(r.Context(), histReq)
 	if err != nil {
 		log.Printf("Failed to get chat history: %v", err)
 		http.Error(w, "Failed to get chat history", http.StatusInternalServerError)
