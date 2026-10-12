@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -18,9 +19,15 @@ import (
 	media "kubechat/proto/media"
 )
 
+// objectStore is the subset of *minio.Client used by the media service.
+type objectStore interface {
+	PutObject(ctx context.Context, bucketName, objectName string, reader io.Reader, objectSize int64, opts minio.PutObjectOptions) (minio.UploadInfo, error)
+	StatObject(ctx context.Context, bucketName, objectName string, opts minio.StatObjectOptions) (minio.ObjectInfo, error)
+}
+
 type server struct {
 	media.UnimplementedMediaServiceServer
-	minioClient *minio.Client
+	minioClient objectStore
 	bucketName  string
 	publicURL   string
 }
