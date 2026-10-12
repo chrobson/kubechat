@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -48,14 +49,26 @@ func (s *server) GetMetadata(ctx context.Context, req *media.GetMetadataRequest)
 	}, nil
 }
 
+const maxUploadSize = 10 << 20 // 10MB
+
 func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// 10MB limit
-	r.ParseMultipartForm(10 << 20)
+	// ParseMultipartForm's argument only bounds memory use (the rest spills to
+	// disk), so the request body itself has to be capped.
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "File too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "Invalid multipart form", http.StatusBadRequest)
+		return
+	}
 
 	file, handler, err := r.FormFile("file")
 	if err != nil {

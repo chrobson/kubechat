@@ -131,6 +131,24 @@ func TestHandleUploadErrors(t *testing.T) {
 	}
 }
 
+func TestHandleUploadTooLarge(t *testing.T) {
+	store := &fakeStore{}
+	s := newTestServer(store)
+
+	body, ct := multipartBody(t, "file", "big.bin", "application/octet-stream", bytes.Repeat([]byte("x"), maxUploadSize+1))
+	req := httptest.NewRequest(http.MethodPost, "/upload", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	s.handleUpload(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	if len(store.puts) != 0 {
+		t.Error("oversized file was stored")
+	}
+}
+
 func TestGetMetadata(t *testing.T) {
 	uploaded := time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC)
 	store := &fakeStore{stat: minio.ObjectInfo{
