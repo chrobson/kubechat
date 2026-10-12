@@ -52,7 +52,8 @@ func multipartBody(t *testing.T, field, filename, contentType string, content []
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	h := textproto.MIMEHeader{}
-	h.Set("Content-Disposition", `form-data; name="`+field+`"; filename="`+filename+`"`)
+	escape := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace
+	h.Set("Content-Disposition", `form-data; name="`+field+`"; filename="`+escape(filename)+`"`)
 	h.Set("Content-Type", contentType)
 	part, err := w.CreatePart(h)
 	if err != nil {
@@ -128,6 +129,29 @@ func TestHandleUploadErrors(t *testing.T) {
 				t.Errorf("status = %d, want %d", rec.Code, tc.wantStatus)
 			}
 		})
+	}
+}
+
+func TestHandleUploadResponseIsValidJSON(t *testing.T) {
+	store := &fakeStore{}
+	s := newTestServer(store)
+
+	// The file extension is user controlled and ends up in the object name.
+	body, ct := multipartBody(t, "file", `evil.x"y`, "text/plain", []byte("x"))
+	req := httptest.NewRequest(http.MethodPost, "/upload", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	s.handleUpload(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response is not valid JSON: %v\n%s", err, rec.Body)
+	}
+	if resp["media_id"] != store.puts[0].object {
+		t.Errorf("media_id = %q, want %q", resp["media_id"], store.puts[0].object)
 	}
 }
 

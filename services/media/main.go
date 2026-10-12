@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -90,7 +91,10 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"media_id": "%s", "url": "%s/%s/%s"}`, mediaID, s.publicURL, s.bucketName, mediaID)
+	json.NewEncoder(w).Encode(map[string]string{
+		"media_id": mediaID,
+		"url":      fmt.Sprintf("%s/%s/%s", s.publicURL, s.bucketName, mediaID),
+	})
 }
 
 func main() {
