@@ -622,6 +622,23 @@ func TestHandleMessageGetOnlineUsers(t *testing.T) {
 	}
 }
 
+func TestHandleMessageGetOnlineUsersFullBuffer(t *testing.T) {
+	g := newTestGateway()
+	c := &Client{UserID: "alice", Send: make(chan []byte, 1)}
+	c.Send <- []byte("pending")
+
+	done := make(chan struct{})
+	go func() {
+		g.handleMessage(c, &Message{Type: "get_online_users"})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handleMessage blocked on a full send buffer")
+	}
+}
+
 func TestHandleMessageUnknownType(t *testing.T) {
 	g := newTestGateway()
 	c := newTestClient("alice")

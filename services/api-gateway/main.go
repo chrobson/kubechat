@@ -337,8 +337,9 @@ func (g *Gateway) handleMessage(client *Client, msg *Message) {
 		}
 
 		data, _ := json.Marshal(response)
-		client.Send <- data
-		wsMessages.Inc()
+		if trySend(client, data) {
+			wsMessages.Inc()
+		}
 	}
 }
 
