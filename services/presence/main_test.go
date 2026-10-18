@@ -30,7 +30,7 @@ func (f *fakePublisher) Publish(subject string, data []byte) error {
 func newTestServer(t *testing.T) (*server, *miniredis.Miniredis, *fakePublisher) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
 	t.Cleanup(func() { rdb.Close() })
 	pub := &fakePublisher{}
 	return &server{redisClient: rdb, natsConn: pub}, mr, pub
