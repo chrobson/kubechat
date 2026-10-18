@@ -1,5 +1,38 @@
 # KubeChat Testing Guide
 
+## Unit Tests
+
+Unit tests live next to each service (`services/*/main_test.go`) and need no
+running infrastructure: NATS, gRPC clients and MinIO are replaced with
+in-process fakes, Redis with [miniredis](https://github.com/alicebob/miniredis)
+and Postgres with [sqlmock](https://github.com/DATA-DOG/go-sqlmock).
+
+```bash
+make test                        # go test -race ./...
+go test -cover ./...             # with coverage
+go test ./services/api-gateway/  # single service
+```
+
+What is covered:
+
+- **api-gateway**: JWT verification (expiry, wrong secret, `alg: none`, bad
+  claims), auth middleware, HTTP handlers, history pagination parameters,
+  WebSocket message routing, NATS fan-out to clients, and end-to-end WebSocket
+  sessions (delivery, reconnect, disconnect cleanup).
+- **users**: registration, duplicate/invalid input, login and issued JWT claims.
+- **chat**: publishing to recipient and sender subjects, persistence, failure
+  handling, history mapping.
+- **message-store**: keyset vs offset pagination queries, limit clamping,
+  idempotent inserts, error propagation, delete authorization.
+- **presence**: online/offline state in Redis and status events.
+- **media**: uploads (size limit, response encoding) and metadata lookup.
+
+CI (`.github/workflows/ci.yml`) runs `gofmt`, `go build`, `go vet` and
+`go test -race` on every push and pull request.
+
+The sections below describe manual checks against a running stack
+(`docker-compose up` in `docker/`).
+
 ## API Testing
 
 ### 1. User Registration
@@ -44,12 +77,27 @@ Expected response:
 }
 ```
 
+### 3. Chat History
+
+History is returned newest first (`limit` defaults to 50, max 200). To load
+older messages, pass the last message of the previous page as the cursor:
+`before_id` is its `message_id` and `before` its `timestamp` in RFC 3339 form,
+keeping the fractional seconds.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/chat/history?user1=$ALICE&user2=$BOB&limit=20"
+
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/chat/history?user1=$ALICE&user2=$BOB&limit=20&before=2024-01-01T12:00:00Z&before_id=MESSAGE_ID"
+```
+
 ## WebSocket Testing
 
 ### Connect to WebSocket
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8080/ws?user_id=USER_ID');
+const ws = new WebSocket('ws://localhost:8080/ws?token=JWT_TOKEN');
 
 ws.onopen = function(event) {
     console.log('Connected to WebSocket');
@@ -165,10 +213,10 @@ nats sub "chat.messages.USER_ID"
 
 ```bash
 # Publish user status
-nats pub "users.status" '{"user_id":"test123","online":true,"timestamp":"2024-01-01T12:00:00Z"}'
+nats pub "users.status" '{"user_id":"test123","online":true,"timestamp":{"seconds":1704110400}}'
 
 # Publish chat message
-nats pub "chat.messages.USER_ID" '{"message_id":"msg123","sender_id":"sender123","recipient_id":"USER_ID","content":"Test message","timestamp":"2024-01-01T12:00:00Z"}'
+nats pub "chat.messages.USER_ID" '{"message_id":"msg123","sender_id":"sender123","recipient_id":"USER_ID","content":"Test message","timestamp":{"seconds":1704110400}}'
 ```
 
 ## Integration Testing
@@ -220,24 +268,11 @@ Access NATS monitoring at: http://localhost:8222
 
 ```bash
 # Connect to PostgreSQL
-docker exec -it kubechat_postgres_1 psql -U user -d kubechat
+docker-compose -f docker/docker-compose.yml exec postgres psql -U user -d kubechat
 
 # Check messages table
 SELECT COUNT(*) FROM messages;
 SELECT * FROM messages ORDER BY timestamp DESC LIMIT 10;
-```
-
-## Unit Testing
-
-```bash
-# Run all tests
-go test ./...
-
-# Run tests with coverage
-go test -cover ./...
-
-# Run tests for specific service
-go test ./services/users/...
 ```
 
 ## Performance Testing
@@ -245,10 +280,10 @@ go test ./services/users/...
 ### WebSocket Connection Test
 
 ```javascript
-// Test multiple simultaneous connections
+// Test multiple simultaneous connections (tokens obtained via /login)
 const connections = [];
 for (let i = 0; i < 100; i++) {
-    const ws = new WebSocket(`ws://localhost:8080/ws?user_id=user${i}`);
+    const ws = new WebSocket(`ws://localhost:8080/ws?token=${tokens[i]}`);
     connections.push(ws);
 }
 ```
