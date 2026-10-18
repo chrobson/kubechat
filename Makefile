@@ -1,4 +1,4 @@
-.PHONY: proto clean build run-users run-chat run-presence run-messagestore run-gateway
+.PHONY: proto clean build test vet fmt run-users run-chat run-presence run-messagestore run-media run-gateway deps
 
 # Generate protobuf files
 proto:
@@ -18,6 +18,16 @@ build:
 	go build -o bin/messagestore-service ./services/message-store
 	go build -o bin/media-service ./services/media
 	go build -o bin/api-gateway ./services/api-gateway
+
+# Run unit tests (no external services required)
+test:
+	go test -race ./...
+
+vet:
+	go vet ./...
+
+fmt:
+	gofmt -l -w services
 
 # Run individual services
 run-users:
