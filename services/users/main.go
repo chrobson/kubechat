@@ -37,6 +37,7 @@ type server struct {
 	users     map[string]*User
 	mutex     sync.RWMutex
 	jwtSecret []byte
+	hashCost  int // bcrypt cost; zero means bcrypt.DefaultCost
 }
 
 var (
@@ -80,7 +81,7 @@ func (s *server) CreateUser(ctx context.Context, req *users.CreateUserRequest) (
 	userID := generateUserID(req.Username)
 
 	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), s.bcryptCost())
 	if err != nil {
 		return &users.CreateUserResponse{
 			Success: false,
@@ -178,6 +179,13 @@ func (s *server) GetUser(ctx context.Context, req *users.GetUserRequest) (*users
 		Email:    user.Email,
 		Online:   user.Online,
 	}, nil
+}
+
+func (s *server) bcryptCost() int {
+	if s.hashCost == 0 {
+		return bcrypt.DefaultCost
+	}
+	return s.hashCost
 }
 
 func generateID() string {

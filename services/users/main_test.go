@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 
 	users "kubechat/proto/users"
 )
@@ -18,6 +19,7 @@ func newTestServer() *server {
 	return &server{
 		users:     make(map[string]*User),
 		jwtSecret: []byte(testSecret),
+		hashCost:  bcrypt.MinCost,
 	}
 }
 
@@ -49,8 +51,8 @@ func TestCreateUser(t *testing.T) {
 	if stored == nil {
 		t.Fatal("user not stored")
 	}
-	if stored.Password == "secret123" {
-		t.Error("password stored in plain text")
+	if bcrypt.CompareHashAndPassword([]byte(stored.Password), []byte("secret123")) != nil {
+		t.Error("password not stored as a bcrypt hash")
 	}
 	if stored.Email != "alice@example.com" {
 		t.Errorf("email = %q", stored.Email)
