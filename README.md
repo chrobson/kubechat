@@ -1,30 +1,32 @@
 # KubeChat - Microservices Chat Application
 
+[![CI](https://github.com/chrobson/kubechat/actions/workflows/ci.yml/badge.svg)](https://github.com/chrobson/kubechat/actions/workflows/ci.yml)
+
 A real-time chat application built with Go microservices, Kubernetes, gRPC, and NATS.
 
-## ✅ Completed Features
+## Features
 
 ### Core Services
-- ✅ **users-service**: User registration, authentication with JWT tokens.
-- ✅ **chat-service**: Real-time messaging with NATS integration.
-- ✅ **presence-service**: User online/offline status tracking.
-- ✅ **message-store-service**: PostgreSQL message persistence.
-- ✅ **media-service**: File upload and storage management using MinIO (S3-compatible).
-- ✅ **api-gateway**: REST API, WebSocket gateway, and Media Proxy.
+- **users-service**: User registration, authentication with JWT tokens.
+- **chat-service**: Real-time messaging with NATS integration.
+- **presence-service**: User online/offline status tracking.
+- **message-store-service**: PostgreSQL message persistence.
+- **media-service**: File upload and storage management using MinIO (S3-compatible).
+- **api-gateway**: REST API, WebSocket gateway, and Media Proxy.
 
 ### Real-time Features
-- ✅ **Secure WebSockets**: JWT-based authentication for real-time connections.
-- ✅ **Typing Indicators**: Real-time "is typing..." status via NATS.
-- ✅ **Read Receipts**: Visual confirmation (✓✓) when messages are read.
-- ✅ **Multimedia Support**: Image sharing with automatic preview in the web client.
-- ✅ **Presence Updates**: Live updates of user online/offline status.
+- **Secure WebSockets**: JWT-based authentication for real-time connections.
+- **Typing Indicators**: Real-time "is typing..." status via NATS.
+- **Read Receipts**: Visual confirmation when messages are read.
+- **Multimedia Support**: Image sharing with automatic preview in the web client.
+- **Presence Updates**: Live updates of user online/offline status.
 
 ### Infrastructure & Security
-- ✅ **JWT Authentication**: Secure endpoints and session management.
-- ✅ **Rate Limiting**: Protection against spam and DoS at the API Gateway level.
-- ✅ **S3 Storage**: MinIO integration for persistent multimedia storage.
-- ✅ **gRPC APIs**: High-performance inter-service communication.
-- ✅ **Docker & Kubernetes**: Containerized services with ready-to-use manifests.
+- **JWT Authentication**: Secure endpoints and session management.
+- **Rate Limiting**: Protection against spam and DoS at the API Gateway level.
+- **S3 Storage**: MinIO integration for persistent multimedia storage.
+- **gRPC APIs**: High-performance inter-service communication.
+- **Docker & Kubernetes**: Containerized services with ready-to-use manifests.
 
 ## Architecture
 
@@ -70,11 +72,11 @@ A real-time chat application built with Go microservices, Kubernetes, gRPC, and 
 
 ## Quick Start
 
-### 🎯 Try the Demo (Recommended)
+### Demo
 ```bash
 ./demo/start-demo.sh
 ```
-Then open http://localhost:8080 in your browser!
+Then open http://localhost:8080 in your browser.
 
 ### Using Docker Compose
 ```bash
@@ -92,7 +94,21 @@ kubectl apply -f k8s/
 - **POST /register** - User registration
 - **POST /login** - User authentication (returns JWT)
 - **POST /upload** - Upload media (requires JWT)
+- **GET /user/{id}** - User profile (requires JWT)
+- **GET /chat/history?user1=&user2=** - Conversation history, newest first; supports `limit` and a `before`/`before_id` cursor (requires JWT)
 - **GET /ws?token=JWT** - Secure WebSocket connection
+
+## Development
+
+```bash
+make build   # build all services into bin/
+make test    # unit tests with the race detector
+make vet     # go vet
+```
+
+Unit tests run without any external services (NATS, Redis, Postgres and MinIO
+are faked or emulated in-process). See [TESTING.md](TESTING.md) for details and
+manual API checks.
 
 ## License
 
@@ -100,7 +116,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ## Documentation
 
-- 🎯 [Demo Guide](DEMO.md) - Quick demo setup
-- 📖 [Deployment Guide](DEPLOYMENT.md) - Local and K8s deployment
-- 🧪 [Testing Guide](TESTING.md) - Integration tests
-- 🔧 [Makefile](Makefile) - Build commands
+- [Demo Guide](DEMO.md) - Quick demo setup
+- [Deployment Guide](DEPLOYMENT.md) - Local and K8s deployment
+- [Testing Guide](TESTING.md) - Unit tests and manual API checks
+- [Makefile](Makefile) - Build commands
