@@ -146,22 +146,36 @@ kubectl port-forward service/api-gateway 8080:80 -n kubechat
 
 ## Environment Variables
 
+`JWT_SECRET` must be identical for users-service and api-gateway. If unset,
+both fall back to a demo default, which must not be used in production.
+
+### users-service
+- `JWT_SECRET`: HMAC secret for signing tokens
+
 ### chat-service
 - `NATS_URL`: NATS connection URL (default: nats://localhost:4222)
 - `MESSAGE_STORE_URL`: Message store service URL (default: localhost:50054)
 
 ### presence-service
 - `NATS_URL`: NATS connection URL (default: nats://localhost:4222)
+- `REDIS_ADDR`: Redis address (default: localhost:6379)
 
 ### message-store-service
 - `NATS_URL`: NATS connection URL (default: nats://localhost:4222)
-- `DATABASE_URL`: PostgreSQL connection URL
+- `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`: PostgreSQL
+  connection (defaults: postgres, 5432, user, password, kubechat)
+
+### media-service
+- `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_USE_SSL`, `MINIO_BUCKET`
+- `PUBLIC_MEDIA_URL`: Base URL used in returned media links
 
 ### api-gateway
 - `NATS_URL`: NATS connection URL (default: nats://localhost:4222)
 - `USERS_SERVICE_URL`: Users service URL (default: localhost:50051)
 - `CHAT_SERVICE_URL`: Chat service URL (default: localhost:50053)
 - `PRESENCE_SERVICE_URL`: Presence service URL (default: localhost:50052)
+- `MEDIA_SERVICE_URL`: Media HTTP endpoint (default: http://localhost:8081)
+- `JWT_SECRET`: HMAC secret for verifying tokens
 
 ## Troubleshooting
 
